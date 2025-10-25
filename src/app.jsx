@@ -1,13 +1,16 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Upload, Shield, Video, FileText, Play, Square, Link as LinkIcon, Loader2 } from "lucide-react";
-
-/*
-  Veil — Sensitive Info Blurrer
-  Features:
-  - Upload documents -> sends to /api/redact/document
-  - Live dashcam preview (BETA) -> connects to /ws/redact for real-time masking
-*/
+import {
+  Upload,
+  Shield,
+  FileText,
+  Play,
+  Square,
+  Link as LinkIcon,
+  Loader2,
+} from "lucide-react";
+import OCRImage from "./OCRImage.jsx";
+import { ocrImage } from "./ocrImage.js"; // ✅ keep this
 
 function Pill({ children }) {
   return (
@@ -22,7 +25,7 @@ function PrimaryButton({ children, onClick, disabled }) {
     <button
       onClick={onClick}
       disabled={disabled}
-      className={`group relative inline-flex items-center justify-center gap-2 rounded-2xl border border-zinc-200 px-6 py-4 text-sm font-semibold shadow-lg transition-all focus:outline-none focus:ring-4 active:scale-[0.99] ${
+      className={`relative inline-flex items-center justify-center gap-2 rounded-2xl border border-zinc-200 px-6 py-4 text-sm font-semibold shadow-lg transition-all focus:outline-none focus:ring-4 active:scale-[0.99] ${
         disabled
           ? "bg-zinc-400 text-white shadow-none cursor-not-allowed"
           : "bg-black text-white shadow-black/10 hover:shadow-xl focus:ring-black/20"
@@ -61,20 +64,42 @@ function DocumentUploader() {
     setDownHref("");
     const f = e.target.files?.[0];
     if (!f) return;
-    setDocName(f.name);
 
-    const fd = new FormData();
-    fd.append("file", f);
+    setDocName(f.name);
     setLoading(true);
 
     try {
-      const res = await fetch("/api/redact/document", { method: "POST", body: fd });
-      if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      setDownHref(url);
+      const isPDF =
+        f.type === "application/pdf" || f.name.toLowerCase().endsWith(".pdf");
+      const isImage = f.type.startsWith("image/");
+
+      if (isImage) {
+        // ✅ Fast local image OCR (old working path)
+        const text = await ocrImage(f, () => {});
+        const blob = new Blob([text], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        setDownHref(url);
+      } else if (isPDF) {
+        // ✅ Send PDFs to backend like before
+        const fd = new FormData();
+        fd.append("file", f);
+        const res = await fetch("/api/redact/document", { method: "POST", body: fd });
+        if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        setDownHref(url);
+      } else {
+        // Other types → backend
+        const fd = new FormData();
+        fd.append("file", f);
+        const res = await fetch("/api/redact/document", { method: "POST", body: fd });
+        if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        setDownHref(url);
+      }
     } catch (err) {
-      setError(err.message || "Upload failed");
+      setError(err.message || "OCR failed");
     } finally {
       setLoading(false);
     }
@@ -83,8 +108,10 @@ function DocumentUploader() {
   return (
     <div className="space-y-3">
       <PrimaryButton onClick={handleDocClick} disabled={loading}>
-        {loading ? <Loader2 className="animate-spin" size={18} /> : <FileText size={18} />} Upload documents
+        {loading ? <Loader2 className="animate-spin" size={18} /> : <FileText size={18} />}
+        Upload & Extract Text
       </PrimaryButton>
+
       <input
         ref={docInputRef}
         type="file"
@@ -93,20 +120,22 @@ function DocumentUploader() {
         className="hidden"
       />
 
-      <div className="text-xs text-zinc-500 min-h-[1.25rem]">
+      {/* You had this dark block before; leaving it as-is */}
+      <div className="min-h-screen bg-zinc-900 text-white">
         {docName && !loading && !downHref && (
           <div className="flex items-center gap-2">
-            <Upload size={14} /> Selected doc: <span className="font-medium text-zinc-700">{docName}</span>
+            <Upload size={14} /> Selected doc:{" "}
+            <span className="font-medium text-zinc-700">{docName}</span>
           </div>
         )}
         {error && <div className="text-red-600">{error}</div>}
         {downHref && (
           <a
             href={downHref}
-            download
+            download="extracted.txt"
             className="mt-1 inline-flex items-center gap-1 text-emerald-700 underline decoration-dotted underline-offset-2"
           >
-            <LinkIcon size={14} /> Download redacted file
+            <LinkIcon size={14} /> Download extracted text
           </a>
         )}
       </div>
@@ -129,11 +158,11 @@ function DashcamLive() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
+
     const ctx = canvas.getContext("2d");
     canvas.width = video.videoWidth || 640;
     canvas.height = video.videoHeight || 360;
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
     ctx.lineWidth = 3;
     ctx.strokeStyle = "rgba(255, 200, 0, 0.9)";
     ctx.fillStyle = "rgba(255, 200, 0, 0.15)";
@@ -147,6 +176,7 @@ function DashcamLive() {
     const video = videoRef.current;
     const canvas = canvasRef.current;
     if (!video || !canvas) return;
+
     drawOverlay();
 
     if (wsRef.current && wsRef.current.readyState === 1) {
@@ -170,11 +200,17 @@ function DashcamLive() {
   const start = async () => {
     if (running) return;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false,
+      });
       streamRef.current = stream;
       if (videoRef.current) videoRef.current.srcObject = stream;
 
-      const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/redact";
+      const url =
+        (location.protocol === "https:" ? "wss://" : "ws://") +
+        location.host +
+        "/ws/redact";
       const ws = new WebSocket(url);
       wsRef.current = ws;
 
@@ -187,7 +223,7 @@ function DashcamLive() {
           if (msg.type === "masks" && Array.isArray(msg.boxes)) {
             setBoxes(msg.boxes);
           }
-        } catch (_) {}
+        } catch {}
       };
 
       setRunning(true);
@@ -221,7 +257,9 @@ function DashcamLive() {
         {!running ? (
           <SecondaryButton onClick={start}>
             <Play size={16} /> Start live dashcam
-            <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">BETA</span>
+            <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
+              BETA
+            </span>
           </SecondaryButton>
         ) : (
           <SecondaryButton onClick={stop}>
@@ -285,6 +323,7 @@ export default function App() {
 
               <div className="flex flex-col gap-4 pt-1">
                 <DocumentUploader />
+                <OCRImage />
                 <DashcamLive />
               </div>
 
