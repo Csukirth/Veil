@@ -11,7 +11,7 @@ const __dirname = path.dirname(__filename);
 
 const SAVED_DIR = path.join(__dirname, "saved");
 const ORIGINAL_FILE = "extracted.txt";
-const REDACTED_FILE = "extractedCopy.txt";
+const REDACTED_FILE = "extracted_masked.txt";
 
 async function compareRedactions() {
   try {
@@ -85,14 +85,46 @@ async function compareRedactions() {
       }
     }
     
-    // Display results
-    results.forEach((result, idx) => {
-      console.log(`${idx + 1}. ${result.tag}`);
-      console.log(`   ➜ "${result.value}"\n`);
+    // Create output text
+    let outputText = "🔍 Redaction Comparison Report\n";
+    outputText += "=".repeat(80) + "\n\n";
+    outputText += `📄 Original: ${ORIGINAL_FILE}\n`;
+    outputText += `📄 Redacted: ${REDACTED_FILE}\n\n`;
+    outputText += `Found ${uniqueTags.length} unique redaction tag(s):\n\n`;
+    
+    uniqueTags.forEach((tag, idx) => {
+      outputText += `${idx + 1}. ${tag}\n`;
     });
     
+    outputText += "\n" + "=".repeat(80) + "\n\n";
+    outputText += "📊 Redacted Values:\n\n";
+    
+    // Add results to output
+    results.forEach((result, idx) => {
+      outputText += `${idx + 1}. ${result.tag}\n`;
+      outputText += `   ➜ "${result.value}"\n\n`;
+    });
+    
+    outputText += "=".repeat(80) + "\n";
+    outputText += `✨ Successfully identified ${results.length} redaction(s)\n\n`;
+    
+    // Add detailed comparison
+    outputText += "📋 Detailed Comparison:\n";
+    outputText += "=".repeat(80) + "\n\n";
+    outputText += "ORIGINAL TEXT:\n";
+    outputText += "-".repeat(40) + "\n";
+    outputText += originalText + "\n\n";
+    outputText += "REDACTED TEXT:\n";
+    outputText += "-".repeat(40) + "\n";
+    outputText += redactedText + "\n\n";
+    
+    // Save to file
+    const outputPath = path.join(SAVED_DIR, "redaction_comparison.txt");
+    await fs.writeFile(outputPath, outputText, "utf8");
+    
     console.log("=".repeat(80));
-    console.log(`\n✨ Successfully identified ${results.length} redaction(s)\n`);
+    console.log(`\n✨ Successfully identified ${results.length} redaction(s)`);
+    console.log(`📄 Comparison report saved to: redaction_comparison.txt\n`);
 
   } catch (error) {
     console.error("\n❌ Error:", error.message);

@@ -1,0 +1,30 @@
+🔍 Redaction Comparison Report
+================================================================================
+
+📄 Original: extracted.txt
+📄 Redacted: extracted_masked.txt
+
+Found 2 unique redaction tag(s):
+
+1. <EMAIL_ADDRESS>
+2. <PHONE_NUMBER>
+
+================================================================================
+
+📊 Redacted Values:
+
+================================================================================
+✨ Successfully identified 0 redaction(s)
+
+📋 Detailed Comparison:
+================================================================================
+
+ORIGINAL TEXT:
+----------------------------------------
+ACME Logistics — Delivery Receipt  Customer: Jordan Patel  Email: jordan.patel.sample+test@acme-mail.org  Alt Email: j.patel@sample.co  Phone: (415) 555-0137  Backup: +1-628-555-0199  Address: 221B Baker Street, San Francisco, CA 94110  Vehicle: Tesla Model 3 — Plate: 7ABC123  Driver: "J. Rivera" — Employee ID: EMP-0042  Notes:  - Dropo ff   at loading dock B.  - Contact security desk on arrival (ext. 4129).  - Package ID: PKG-23-10-VEIL-0007  - Tracking: TRK-9X2C-77F1  - Invoice: INV-2025-10-25  Payment (masked): ##tk Hktokdootok 1234 — Exp: 09/27  Fake SSN for testing: 123-45-6789  URL: https://portal.acme.example/login  Signature: Date: _/ /
+
+
+REDACTED TEXT:
+----------------------------------------
+ACME Logistics — Delivery Receipt  Customer: Jordan Patel  Email: <EMAIL_ADDRESS>  Alt Email: <EMAIL_ADDRESS>  Phone: <PHONE_NUMBER>  Backup: <PHONE_NUMBER>  Address: 221B Baker Street, San Francisco, CA 94110  Vehicle: Tesla Model 3 — Plate: 7ABC123  Driver: "J. Rivera" — Employee ID: EMP-0042  Notes:  - Dropo ff   at loading dock B.  - Contact security desk on arrival (ext. 4129).  - Package ID: PKG-23-10-VEIL-0007  - Tracking: TRK-9X2C-77F1  - Invoice: INV-2025-10-25  Payment (masked): ##tk Hktokdootok 1234 — Exp: 09/27  Fake SSN for testing: 123-45-6789  URL: https://portal.acme.example/login  Signature: Date: _/ /
+
