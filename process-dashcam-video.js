@@ -1,14 +1,11 @@
 // process-dashcam-video.js
-// Processes dashcam videos by detecting license plates via Colab API and blurring them
+// Processes dashcam videos by detecting license plates locally and blurring them
 
 import { createCanvas, loadImage } from "canvas";
 import fs from "fs/promises";
 import path from "path";
 import { spawn } from "child_process";
-import fetch from "node-fetch";
-import { FormData, File } from "formdata-node";
-
-const COLAB_API_URL = process.env.COLAB_API_URL || "http://localhost:8000";
+import { detectLicensePlates } from "./local-yolo-detector.js";
 
 /**
  * Extract frames from video using ffmpeg
@@ -80,37 +77,7 @@ async function getVideoFPS(videoPath) {
   });
 }
 
-/**
- * Detect license plates in a frame using Colab API
- */
-async function detectLicensePlates(framePath, colabUrl) {
-  try {
-    const imageBuffer = await fs.readFile(framePath);
-    
-    // Create a proper File object for Node.js FormData
-    const file = new File([imageBuffer], path.basename(framePath), {
-      type: "image/jpeg"
-    });
-    
-    const formData = new FormData();
-    formData.set("file", file);
-    
-    const response = await fetch(`${colabUrl}/detect`, {
-      method: "POST",
-      body: formData
-    });
-    
-    if (!response.ok) {
-      throw new Error(`API error: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    return data.boxes || [];
-  } catch (error) {
-    console.warn(`⚠️  Detection failed for ${path.basename(framePath)}: ${error.message}`);
-    return [];
-  }
-}
+// Detection function is now imported from local-yolo-detector.js
 
 /**
  * Blur a region in an image
@@ -135,7 +102,7 @@ async function blurFrame(inputPath, outputPath, boxes, mode = "blur") {
       const imageData = ctx.getImageData(x, y, w, h);
       
       // Apply box blur (simple and fast)
-      const blurred = boxBlur(imageData, 15);
+      const blurred = boxBlur(imageData, 15, ctx);
       ctx.putImageData(blurred, x, y);
     } else if (mode === "blackout") {
       // Draw black rectangle
@@ -152,7 +119,7 @@ async function blurFrame(inputPath, outputPath, boxes, mode = "blur") {
 /**
  * Simple box blur implementation
  */
-function boxBlur(imageData, radius) {
+function boxBlur(imageData, radius, ctx) {
   const { data, width, height } = imageData;
   const output = new Uint8ClampedArray(data);
   
@@ -183,7 +150,10 @@ function boxBlur(imageData, radius) {
     }
   }
   
-  return new ImageData(output, width, height);
+  // Use canvas context to create ImageData (Node.js canvas compatibility)
+  const blurredImageData = ctx.createImageData(width, height);
+  blurredImageData.data.set(output);
+  return blurredImageData;
 }
 
 /**
@@ -222,17 +192,13 @@ async function reassembleVideo(framesDir, outputPath, fps) {
 /**
  * Main processing function
  */
-export async function processDashcamVideo(inputPath, outputPath, mode = "blur", colabUrl = COLAB_API_URL, progressCallback) {
+export async function processDashcamVideo(inputPath, outputPath, mode = "blur", progressCallback) {
   const startTime = Date.now();
   console.log(`\n${"=".repeat(70)}`);
   console.log(`🎥 Processing dashcam video: ${path.basename(inputPath)}`);
   console.log(`🔒 Mode: ${mode.toUpperCase()}`);
-  console.log(`🌐 Colab API: ${colabUrl}`);
+  console.log(`🤖 Using local YOLOv8 detection`);
   console.log("=".repeat(70));
-  
-  // Skip health check - will test with actual detection call instead
-  console.log("⏭️  Skipping health check - will validate with first frame detection");
-  // The /health endpoint seems to hang, but /detect works fine
   
   // Create temporary directories
   const tempDir = path.join(path.dirname(outputPath), ".temp_" + Date.now());
@@ -265,8 +231,8 @@ export async function processDashcamVideo(inputPath, outputPath, mode = "blur", 
       const framePath = path.join(framesDir, frameName);
       const outputFramePath = path.join(processedDir, `processed_${frameName.replace("frame_", "")}`);
       
-      // Detect license plates
-      const boxes = await detectLicensePlates(framePath, colabUrl);
+      // Detect license plates (using local YOLOv8)
+      const boxes = await detectLicensePlates(framePath);
       totalDetections += boxes.length;
       
       // Blur or blackout detected regions
@@ -321,16 +287,15 @@ export async function processDashcamVideo(inputPath, outputPath, mode = "blur", 
 
 // CLI usage
 if (process.argv[1] === new URL(import.meta.url).pathname) {
-  const [inputPath, outputPath, mode = "blur", colabUrl] = process.argv.slice(2);
+  const [inputPath, outputPath, mode = "blur"] = process.argv.slice(2);
   
   if (!inputPath || !outputPath) {
-    console.log("Usage: node process-dashcam-video.js <input> <output> [mode] [colabUrl]");
+    console.log("Usage: node process-dashcam-video.js <input> <output> [mode]");
     console.log("  mode: 'blur' (default) or 'blackout'");
-    console.log("  colabUrl: Colab API URL (default: http://localhost:8000)");
     process.exit(1);
   }
   
-  processDashcamVideo(inputPath, outputPath, mode, colabUrl)
+  processDashcamVideo(inputPath, outputPath, mode)
     .then(result => {
       console.log("SUCCESS:", JSON.stringify(result));
       process.exit(0);

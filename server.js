@@ -35,6 +35,30 @@ const BRIGHTDATA_UNLOCKER_ZONE = process.env.UNLOCKER_ZONE || "unlocker";
 // Serve saved files so you can open them in the browser too
 app.use("/saved", express.static(SAVE_DIR));
 
+// Clear saved folder endpoint
+app.post("/api/clear-saved", async (req, res) => {
+  try {
+    console.log("🧹 Clearing saved folder...");
+    const files = await fs.readdir(SAVE_DIR);
+    
+    for (const file of files) {
+      const filePath = path.join(SAVE_DIR, file);
+      const stat = await fs.stat(filePath);
+      
+      if (stat.isFile()) {
+        await fs.unlink(filePath);
+        console.log(`   ✓ Deleted ${file}`);
+      }
+    }
+    
+    console.log(`✅ Cleared ${files.length} file(s) from saved folder`);
+    return res.json({ ok: true, deletedCount: files.length });
+  } catch (e) {
+    console.error("❌ Error clearing saved folder:", e);
+    return res.status(500).send(e?.message || "Server error");
+  }
+});
+
 app.post("/api/save-pdf", async (req, res) => {
   try {
     const { filename, pdfData } = req.body || {};
@@ -748,7 +772,10 @@ app.post("/api/search-and-scrape", async (req, res) => {
             url,
             domain,
             filename,
-            error: "SIM_API_KEY not configured"
+            originalPath: `/saved/${filename}`,
+            redactedPath: null,
+            error: "SIM_API_KEY not configured",
+            stats: { pages: pdf.numPages, textLength: finalText.length }
           });
           continue;
         }
@@ -776,6 +803,8 @@ app.post("/api/search-and-scrape", async (req, res) => {
               url,
               domain,
               filename,
+              originalPath: `/saved/${filename}`,
+              redactedPath: null,
               textPath: `/saved/${filename.replace('.pdf', '.txt')}`,
               stats: { pages: pdf.numPages, textLength: finalText.length }
             });
@@ -798,7 +827,10 @@ app.post("/api/search-and-scrape", async (req, res) => {
             url,
             domain,
             filename,
-            error: `SIM API failed: ${simError.message}`
+            originalPath: `/saved/${filename}`,
+            redactedPath: null,
+            error: `SIM API failed: ${simError.message}`,
+            stats: { pages: pdf.numPages, textLength: finalText.length }
           });
           continue;
         }
@@ -868,6 +900,7 @@ app.post("/api/search-and-scrape", async (req, res) => {
           url,
           domain,
           filename,
+          originalPath: `/saved/${filename}`,
           redactedPath,
           stats: {
             pages: pdf.numPages,
@@ -919,7 +952,7 @@ app.post("/api/search-and-scrape", async (req, res) => {
 // Dashcam Video Processing endpoint
 app.post("/api/process-dashcam", async (req, res) => {
   try {
-    const { filename, videoData, mode = "blur", colabUrl } = req.body || {};
+    const { filename, videoData, mode = "blur" } = req.body || {};
     
     if (!videoData) {
       return res.status(400).json({
@@ -928,16 +961,9 @@ app.post("/api/process-dashcam", async (req, res) => {
       });
     }
     
-    if (!colabUrl) {
-      return res.status(400).json({
-        ok: false,
-        error: "Missing Colab API URL. Please provide your Colab notebook URL."
-      });
-    }
-    
     console.log(`\n🎥 Processing dashcam video: ${filename}`);
     console.log(`🔒 Mode: ${mode}`);
-    console.log(`🌐 Colab API: ${colabUrl}`);
+    console.log(`🤖 Using local YOLOv8 detection`);
     
     // Save uploaded video
     const videoFilename = (filename || "dashcam.mp4").replace(/[^\w.\-]/g, "_");
@@ -949,46 +975,6 @@ app.post("/api/process-dashcam", async (req, res) => {
     const videoBuffer = Buffer.from(videoData, "base64");
     await fs.writeFile(inputPath, videoBuffer);
     console.log(`💾 Saved video: ${videoFilename} (${videoBuffer.length} bytes)`);
-    
-    // Check if Colab API is accessible (with retry)
-    console.log("🔍 Checking Colab API connection...");
-    let healthCheckPassed = false;
-    let lastError = null;
-    
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        console.log(`   Attempt ${attempt}/3...`);
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000); // Increased to 10 seconds
-        
-        const healthCheck = await fetch(`${colabUrl}/health`, { 
-          signal: controller.signal 
-        });
-        clearTimeout(timeoutId);
-        
-        if (healthCheck.ok) {
-          healthCheckPassed = true;
-          console.log("✅ Colab API is accessible");
-          break;
-        }
-      } catch (error) {
-        lastError = error.message;
-        console.warn(`   ⚠️  Attempt ${attempt} failed: ${error.message}`);
-        if (attempt < 3) {
-          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
-        }
-      }
-    }
-    
-    if (!healthCheckPassed) {
-      console.error("❌ Colab API check failed after 3 attempts:", lastError);
-      console.warn("⚠️  Continuing anyway - will fail at processing if Colab is really down");
-      // Don't fail here - let it try processing and fail there if needed
-      // return res.status(400).json({
-      //   ok: false,
-      //   error: `Cannot connect to Colab API at ${colabUrl}. Error: ${lastError}`
-      // });
-    }
     
     // Check if FFmpeg is installed
     console.log("🔍 Checking FFmpeg installation...");
@@ -1015,7 +1001,6 @@ app.post("/api/process-dashcam", async (req, res) => {
         inputPath,
         outputPath,
         mode,
-        colabUrl,
         (progress, message) => {
           console.log(`   [${progress.toFixed(0)}%] ${message}`);
         }

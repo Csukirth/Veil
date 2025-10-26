@@ -7,6 +7,7 @@ import {
   Upload,
   FileText,
   Link as LinkIcon,
+  Globe,
   Loader2,
   X,
   Video,
@@ -81,6 +82,15 @@ function DocumentUploader() {
 
     setDocName(f.name);
     setLoading(true);
+    
+    // Clear saved folder first
+    try {
+      setProgressText("Clearing previous files...");
+      await fetch("/api/clear-saved", { method: "POST" });
+    } catch (err) {
+      console.warn("⚠️  Could not clear saved folder:", err);
+    }
+    
     setProgressText("Extracting text from PDF...");
 
     try {
@@ -342,6 +352,14 @@ function DocumentUploader() {
     setLoading(true);
     setError("");
     setShowUrlModal(false);
+    
+    // Clear saved folder first
+    try {
+      setProgressText("Clearing previous files...");
+      await fetch("/api/clear-saved", { method: "POST" });
+    } catch (err) {
+      console.warn("⚠️  Could not clear saved folder:", err);
+    }
 
     try {
       console.log(`🌐 Scraping ${urlsToScrape.length} PDF(s) using BrightData...`);
@@ -394,8 +412,15 @@ function DocumentUploader() {
     setError("");
     setShowUrlModal(false);
     setProgress(10);
-    setProgressText("Searching for PDFs...");
+    setProgressText("Clearing previous files...");
     setSearchResults([]);
+    
+    // Clear saved folder first
+    try {
+      await fetch("/api/clear-saved", { method: "POST" });
+    } catch (err) {
+      console.warn("⚠️  Could not clear saved folder:", err);
+    }
 
     try {
       setProgress(30);
@@ -424,11 +449,11 @@ function DocumentUploader() {
       console.log(`✅ Search complete!`);
       console.log(`📊 Results: ${result.stats.processed}/${result.stats.searched} processed`);
 
-      // Store all results that have redacted PDFs
+      // Store all results that were successfully fetched (have originalPath or redactedPath)
       if (result.results && result.results.length > 0) {
-        const successfulResults = result.results.filter(r => r.redactedPath && !r.error);
+        const successfulResults = result.results.filter(r => r.originalPath || r.redactedPath);
         setSearchResults(successfulResults);
-        setDocName(`Found ${successfulResults.length} protected document(s)`);
+        setDocName(`Found ${successfulResults.length} document(s)`);
       }
 
       console.log("\n🎉 Agentic search & scrape complete!");
@@ -448,11 +473,11 @@ function DocumentUploader() {
       <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '2rem' }}>
         <PrimaryButton onClick={handleDocClick} disabled={loading}>
           {loading ? <Loader2 className="animate-spin" size={18} /> : <FileText size={18} />}
-          Veil Documents. Reveal What Matters.
+          Veil Documents. Hide What Matters
         </PrimaryButton>
 
         <PrimaryButton onClick={handleScraperClick} disabled={loading}>
-          <LinkIcon size={18} />
+          <Globe size={18} />
           Veil Search. Protect the Web.
         </PrimaryButton>
       </div>
@@ -495,9 +520,6 @@ function DocumentUploader() {
       {/* Single Document Result */}
       {redactedHref && searchResults.length === 0 && (
         <div style={{ marginTop: '2rem', textAlign: 'center' }}>
-          <h3 style={{ color: '#10b981', marginBottom: '1rem', fontSize: '1.2em' }}>
-            ✅ Document Protected
-          </h3>
           <div className="download-links" style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
             <button
               onClick={() => {
@@ -513,10 +535,11 @@ function DocumentUploader() {
                 alignItems: 'center',
                 gap: '0.5rem',
                 border: 'none',
-                cursor: 'pointer'
+                cursor: 'pointer',
+                color: 'white'
               }}
             >
-              <FileText size={18} /> View PDF 👁️
+              <FileText size={18} /> View PDF
             </button>
             <a
               href={redactedHref}
@@ -528,10 +551,11 @@ function DocumentUploader() {
                 fontWeight: '600',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '0.5rem'
+                gap: '0.5rem',
+                color: 'white'
               }}
             >
-              <FileText size={18} /> Download PDF 🔒
+              <FileText size={18} /> Download PDF
             </a>
           </div>
         </div>
@@ -540,39 +564,54 @@ function DocumentUploader() {
       {/* Search Results */}
       {searchResults.length > 0 && (
         <div style={{ marginTop: '2rem' }}>
-          <h3 style={{ color: '#10b981', marginBottom: '1rem', fontSize: '1.2em', textAlign: 'center' }}>
-            ✅ {searchResults.length} Document(s) Protected
-          </h3>
-          
           <div style={{ display: 'flex', gap: '1rem', flexWrap: showPdfViewer ? 'nowrap' : 'wrap' }}>
             {/* PDF List/Grid */}
             <div style={{ 
-              flex: showPdfViewer ? '0 0 350px' : '1',
+              flex: showPdfViewer ? '0 0 280px' : '1',
               display: showPdfViewer ? 'flex' : 'grid',
               flexDirection: showPdfViewer ? 'column' : undefined,
               gap: '1rem',
               gridTemplateColumns: showPdfViewer ? undefined : 'repeat(auto-fill, minmax(300px, 1fr))'
             }}>
-              {searchResults.map((result, idx) => (
+              {searchResults.map((result, idx) => {
+                const pdfPath = result.redactedPath || result.originalPath;
+                const isRedacted = !!result.redactedPath;
+                
+                return (
                 <div key={idx} style={{
                   background: 'rgba(255,255,255,0.05)',
-                  border: viewingPdfUrl === result.redactedPath ? '2px solid #3b82f6' : '1px solid rgba(16, 185, 129, 0.3)',
+                  border: viewingPdfUrl === pdfPath ? '2px solid #3b82f6' : '1px solid rgba(16, 185, 129, 0.3)',
                   borderRadius: '8px',
-                  padding: '1rem',
+                  padding: showPdfViewer ? '0.75rem' : '1rem',
                   transition: 'all 0.2s',
                   cursor: 'pointer'
                 }}
                 onClick={() => {
-                  setViewingPdfUrl(result.redactedPath);
+                  setViewingPdfUrl(pdfPath);
                   setShowPdfViewer(true);
                 }}
                 >
                   <div style={{ marginBottom: '0.75rem' }}>
-                    <div style={{ fontSize: '0.85em', color: '#9ca3af', marginBottom: '0.25rem' }}>
-                      {result.domain || 'Unknown Source'}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                      <div style={{ fontSize: '0.75em', color: '#9ca3af' }}>
+                        {result.domain || 'Unknown Source'}
+                      </div>
+                      <div style={{ 
+                        fontSize: '0.65em',
+                        padding: '0.15rem 0.4rem',
+                        borderRadius: '4px',
+                        background: isRedacted ? 
+                          'linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(5, 150, 105, 0.2))' : 
+                          'linear-gradient(135deg, rgba(251, 146, 60, 0.2), rgba(249, 115, 22, 0.2))',
+                        border: isRedacted ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(251, 146, 60, 0.4)',
+                        color: isRedacted ? '#10b981' : '#fb923c',
+                        fontWeight: '600'
+                      }}>
+                        {isRedacted ? 'Protected' : 'Original'}
+                      </div>
                     </div>
                     <div style={{ 
-                      fontSize: showPdfViewer ? '0.9em' : '1em', 
+                      fontSize: showPdfViewer ? '0.8em' : '1em', 
                       color: '#fff', 
                       fontWeight: '500',
                       overflow: 'hidden',
@@ -588,46 +627,50 @@ function DocumentUploader() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        setViewingPdfUrl(result.redactedPath);
+                        setViewingPdfUrl(pdfPath);
                         setShowPdfViewer(true);
                       }}
                       className="download-link"
                       style={{ 
-                        background: viewingPdfUrl === result.redactedPath ? 
+                        background: viewingPdfUrl === pdfPath ? 
                           'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)' : 
                           'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
-                        fontSize: '0.85em',
+                        fontSize: '0.75em',
                         display: 'inline-flex',
                         alignItems: 'center',
-                        gap: '0.5rem',
+                        gap: '0.35rem',
                         flex: 1,
                         justifyContent: 'center',
                         border: 'none',
-                        cursor: 'pointer'
+                        cursor: 'pointer',
+                        color: 'white',
+                        padding: '0.5rem 0.75rem'
                       }}
                     >
-                      <FileText size={12} /> {viewingPdfUrl === result.redactedPath ? 'Viewing' : 'View'}
+                      <FileText size={11} /> {viewingPdfUrl === pdfPath ? 'Viewing' : 'View'}
                     </button>
                     <a
-                      href={result.redactedPath}
+                      href={pdfPath}
                       download
                       onClick={(e) => e.stopPropagation()}
                       className="download-link"
                       style={{ 
                         background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                        fontSize: '0.85em',
+                        fontSize: '0.75em',
                         display: 'inline-flex',
                         alignItems: 'center',
-                        gap: '0.5rem',
+                        gap: '0.35rem',
                         flex: 1,
-                        justifyContent: 'center'
+                        justifyContent: 'center',
+                        color: 'white',
+                        padding: '0.5rem 0.75rem'
                       }}
                     >
-                      <FileText size={12} /> Download
+                      <FileText size={11} /> Download
                     </a>
                   </div>
                 </div>
-              ))}
+              );})}
             </div>
 
             {/* Inline PDF Viewer for Multiple Results */}
@@ -649,7 +692,7 @@ function DocumentUploader() {
                   borderBottom: '1px solid rgba(59, 130, 246, 0.3)'
                 }}>
                   <h3 style={{ margin: 0, fontSize: '1em', color: '#3b82f6' }}>
-                    📄 PDF Preview
+                    PDF Preview
                   </h3>
                   <button 
                     onClick={() => setShowPdfViewer(false)}
@@ -671,18 +714,19 @@ function DocumentUploader() {
                   </button>
                 </div>
                 <div style={{ 
-                  aspectRatio: '1',
                   background: '#1f2937',
                   position: 'relative',
-                  maxHeight: '600px',
-                  overflow: 'hidden'
+                  height: `${Math.min(85, 50 + (searchResults.length * 8))}vh`,
+                  maxHeight: `${Math.min(1400, 600 + (searchResults.length * 120))}px`,
+                  overflow: 'auto'
                 }}>
                   <iframe
                     src={viewingPdfUrl}
                     style={{
                       width: '100%',
                       height: '100%',
-                      border: 'none'
+                      border: 'none',
+                      display: 'block'
                     }}
                     title="PDF Viewer"
                   />
@@ -711,7 +755,7 @@ function DocumentUploader() {
             borderBottom: '1px solid rgba(59, 130, 246, 0.3)'
           }}>
             <h3 style={{ margin: 0, fontSize: '1em', color: '#3b82f6' }}>
-              📄 Redacted PDF Preview
+              Redacted PDF Preview
             </h3>
             <button 
               onClick={() => setShowPdfViewer(false)}
@@ -733,18 +777,19 @@ function DocumentUploader() {
             </button>
           </div>
           <div style={{ 
-            aspectRatio: '1',
             background: '#1f2937',
             position: 'relative',
-            maxHeight: '600px',
-            overflow: 'hidden'
+            height: '85vh',
+            maxHeight: '1400px',
+            overflow: 'auto'
           }}>
             <iframe
               src={viewingPdfUrl}
               style={{
                 width: '100%',
                 height: '100%',
-                border: 'none'
+                border: 'none',
+                display: 'block'
               }}
               title="PDF Viewer"
             />
@@ -911,20 +956,10 @@ function DashcamProcessor() {
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState("");
   const [error, setError] = useState("");
-  const [detectionApiUrl, setDetectionApiUrl] = useState("");
-  const [showApiModal, setShowApiModal] = useState(false);
+  const [processingMode, setProcessingMode] = useState("blackout");
   const [showVideoPlayer, setShowVideoPlayer] = useState(false);
 
   const handleVideoClick = () => {
-    // Check if Detection API URL is set
-    const savedApiUrl = localStorage.getItem("detectionApiUrl");
-    if (!savedApiUrl) {
-      // Show config modal first
-      setShowApiModal(true);
-      return;
-    }
-    // URL is configured, proceed to file selection
-    setDetectionApiUrl(savedApiUrl);
     videoInputRef.current?.click();
   };
 
@@ -946,6 +981,15 @@ function DashcamProcessor() {
 
     setVideoName(f.name);
     setLoading(true);
+    
+    // Clear saved folder first
+    try {
+      setProgressText("Clearing previous files...");
+      await fetch("/api/clear-saved", { method: "POST" });
+    } catch (err) {
+      console.warn("⚠️  Could not clear saved folder:", err);
+    }
+    
     setProgressText("Uploading video...");
 
     try {
@@ -956,7 +1000,7 @@ function DashcamProcessor() {
       );
 
       setProgress(10);
-      setProgressText("Processing video with detection API...");
+      setProgressText("Processing video with local AI...");
 
       // Send to backend for processing
       const res = await fetch("/api/process-dashcam", {
@@ -965,15 +1009,13 @@ function DashcamProcessor() {
         body: JSON.stringify({
           filename: f.name,
           videoData: base64Video,
-          mode: "blackout",
-          colabUrl: detectionApiUrl || localStorage.getItem("detectionApiUrl")
+          mode: processingMode
         }),
       });
 
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ error: `Server error: ${res.status}` }));
-        console.error("Backend error:", errorData);
-        throw new Error(errorData.error || `Processing failed with status ${res.status}`);
+        const errorData = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(errorData.error || `Processing failed: ${res.status}`);
       }
 
       const data = await res.json();
@@ -986,32 +1028,10 @@ function DashcamProcessor() {
       console.log(`📊 Stats:`, data.stats);
 
     } catch (err) {
-      console.error("Processing error:", err);
-      const errorMsg = err?.message || "Failed to process video. Check console for details.";
-      setError(errorMsg);
-      alert(`Error: ${errorMsg}`); // Show alert for visibility
+      console.error(err);
+      setError(err?.message || "Failed to process video.");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleSaveApiUrl = () => {
-    if (!detectionApiUrl.trim()) {
-      setError("Please enter your Detection API URL");
-      return;
-    }
-
-    // Validate URL format
-    try {
-      new URL(detectionApiUrl);
-      localStorage.setItem("detectionApiUrl", detectionApiUrl);
-      setShowApiModal(false);
-      setError("");
-      
-      // Trigger file picker after saving URL
-      setTimeout(() => videoInputRef.current?.click(), 100);
-    } catch (e) {
-      setError("Please enter a valid URL (e.g., https://xyz.trycloudflare.com)");
     }
   };
 
@@ -1023,35 +1043,6 @@ function DashcamProcessor() {
           {loading ? <Loader2 className="animate-spin" size={18} /> : <Video size={18} />}
           Veil Dashcam. Protect License Plates.
         </PrimaryButton>
-        
-        {localStorage.getItem("detectionApiUrl") && (
-          <button
-            onClick={() => {
-              setDetectionApiUrl(localStorage.getItem("detectionApiUrl") || "");
-              setShowApiModal(true);
-            }}
-            style={{
-              padding: '0.5rem 1rem',
-              background: 'transparent',
-              border: '1px solid rgba(255,255,255,0.2)',
-              borderRadius: '8px',
-              color: '#9ca3af',
-              fontSize: '0.9em',
-              cursor: 'pointer',
-              transition: 'all 0.3s'
-            }}
-            onMouseOver={(e) => {
-              e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.5)';
-              e.currentTarget.style.color = '#3b82f6';
-            }}
-            onMouseOut={(e) => {
-              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)';
-              e.currentTarget.style.color = '#9ca3af';
-            }}
-          >
-            ⚙️ Change API URL
-          </button>
-        )}
       </div>
 
       <input
@@ -1092,9 +1083,6 @@ function DashcamProcessor() {
       {/* Processed Video Result */}
       {processedVideoUrl && (
         <div style={{ marginTop: '2rem', textAlign: 'center' }}>
-          <h3 style={{ color: '#10b981', marginBottom: '1rem', fontSize: '1.2em' }}>
-            ✅ Dashcam Video Protected
-          </h3>
           <div className="download-links" style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
             <button
               onClick={() => setShowVideoPlayer(!showVideoPlayer)}
@@ -1107,10 +1095,11 @@ function DashcamProcessor() {
                 alignItems: 'center',
                 gap: '0.5rem',
                 border: 'none',
-                cursor: 'pointer'
+                cursor: 'pointer',
+                color: 'white'
               }}
             >
-              <Play size={18} /> {showVideoPlayer ? 'Hide' : 'View'} Video 👁️
+              <Play size={18} /> {showVideoPlayer ? 'Hide' : 'View'} Video
             </button>
             <a
               href={processedVideoUrl}
@@ -1122,10 +1111,11 @@ function DashcamProcessor() {
                 fontWeight: '600',
                 display: 'inline-flex',
                 alignItems: 'center',
-                gap: '0.5rem'
+                gap: '0.5rem',
+                color: 'white'
               }}
             >
-              <Video size={18} /> Download Video 🔒
+              <Video size={18} /> Download Video
             </a>
           </div>
 
@@ -1155,62 +1145,6 @@ function DashcamProcessor() {
         </div>
       )}
 
-      {/* Detection API Configuration Modal */}
-      {showApiModal && (
-        <div className="modal-overlay" onClick={() => setShowApiModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h2>🤖 Configure Detection API</h2>
-              <button 
-                className="modal-close" 
-                onClick={() => setShowApiModal(false)}
-                aria-label="Close modal"
-              >
-                <X size={24} />
-              </button>
-            </div>
-
-            <div className="modal-body">
-              <p className="modal-description">
-                Enter your License Plate Detection API URL. This is only needed once - it will be saved for future videos.
-                Use your local YOLO server (http://localhost:8001) or any detection API endpoint.
-              </p>
-
-              <div className="keyword-input-section" style={{ marginTop: '1.5rem' }}>
-                <label className="input-label">Detection API URL</label>
-                <input
-                  type="text"
-                  className="url-input"
-                  placeholder="http://localhost:8001"
-                  value={detectionApiUrl}
-                  onChange={(e) => setDetectionApiUrl(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSaveApiUrl()}
-                />
-              </div>
-
-              <div className="info-box" style={{ marginTop: '1.5rem' }}>
-                <strong>🚀 Running Local YOLO Server:</strong>
-                <ol>
-                  <li>In terminal: <code>cd Veil && python3 yolo_server.py</code></li>
-                  <li>Wait for "Uvicorn running on http://127.0.0.1:8001"</li>
-                  <li>Enter: <code>http://localhost:8001</code></li>
-                  <li>License plates will be automatically blacked out</li>
-                </ol>
-              </div>
-
-              <div className="modal-actions">
-                <SecondaryButton onClick={() => setShowApiModal(false)}>
-                  Cancel
-                </SecondaryButton>
-                <PrimaryButton onClick={handleSaveApiUrl}>
-                  <Video size={18} />
-                  Save & Continue
-                </PrimaryButton>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1233,9 +1167,8 @@ export default function App() {
         display: 'flex', 
         justifyContent: 'center', 
         gap: '1rem', 
-        marginBottom: '2rem',
-        borderBottom: '1px solid rgba(255,255,255,0.1)',
-        paddingBottom: '1rem'
+        marginTop: '4rem',
+        marginBottom: '2rem'
       }}>
         <button
           onClick={() => setActiveTab("documents")}
