@@ -15,9 +15,6 @@ const SAVED_DIR = path.join(__dirname, "saved");
 
 async function blurPDF() {
   try {
-    console.log("\n🔒 Securely Redacting PDF (Flattening to Images)\n");
-    console.log("=".repeat(80));
-
     // Load the redacted bounding boxes
     const bboxData = JSON.parse(
       await fs.readFile(path.join(SAVED_DIR, "redacted_bboxes.json"), "utf8")
@@ -40,26 +37,24 @@ async function blurPDF() {
       return;
     }
     
-    console.log(`📦 Loaded ${bboxData.length} redaction(s) from redacted_bboxes.json`);
-    console.log(`🎯 Total bounding boxes to blur: ${allBboxes.length}\n`);
-    
-    // Find the original PDF file
-    const files = await fs.readdir(SAVED_DIR);
-    const pdfFile = files.find(f => f.endsWith('.pdf') && !f.includes('_REDACTED'));
+    // Get the PDF filename from extracted_bboxes.json to know which PDF to process
+    const bboxesData = JSON.parse(
+      await fs.readFile(path.join(SAVED_DIR, "extracted_bboxes.json"), "utf8")
+    );
+    const pdfFile = bboxesData.filename;
     
     if (!pdfFile) {
-      console.error("⚠️  No PDF file found in saved directory");
+      console.error("⚠️  No filename found in extracted_bboxes.json");
       return;
     }
     
-    console.log(`📄 Original PDF: ${pdfFile}`);
+    console.log(`🎨 Redacting ${allBboxes.length} item(s) in ${pdfFile}...`);
     
     const pdfPath = path.join(SAVED_DIR, pdfFile);
     
     // Check if Ghostscript is available
     try {
       execSync('gs --version', { encoding: 'utf8', stdio: 'pipe' });
-      console.log("✅ Ghostscript found\n");
     } catch (err) {
       console.error("❌ Ghostscript not found. Please install:");
       console.error("   macOS: brew install ghostscript");
@@ -72,8 +67,6 @@ async function blurPDF() {
     const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
     const numPages = pdfDoc.getPageCount();
     
-    console.log(`📖 PDF has ${numPages} page(s)\n`);
-    
     // Group bounding boxes by page
     const bboxesByPage = {};
     for (const bbox of allBboxes) {
@@ -83,14 +76,11 @@ async function blurPDF() {
       bboxesByPage[bbox.page].push(bbox);
     }
     
-    console.log("🖼️  Converting pages to images and applying redactions...\n");
-    
     // Create a new PDF document
     const newPdfDoc = await PDFDocument.create();
     
     // Process each page
     for (let pageNum = 1; pageNum <= numPages; pageNum++) {
-      console.log(`📄 Processing Page ${pageNum}...`);
       
       const tempImagePath = path.join(SAVED_DIR, `temp_page_${pageNum}.png`);
       
@@ -105,7 +95,14 @@ async function blurPDF() {
       }
       
       // Load the image
-      const img = await loadImage(tempImagePath);
+      let img;
+      try {
+        img = await loadImage(tempImagePath);
+      } catch (err) {
+        console.error(`   ❌ Failed to load converted image for page ${pageNum}`);
+        console.error(`   This usually means Ghostscript created a corrupt/blank image`);
+        throw err;
+      }
       
       // Create canvas with image
       const canvas = createCanvas(img.width, img.height);
@@ -117,7 +114,6 @@ async function blurPDF() {
       // Draw black rectangles over sensitive areas
       const pageBboxes = bboxesByPage[pageNum] || [];
       if (pageBboxes.length > 0) {
-        console.log(`   🔒 Redacting ${pageBboxes.length} sensitive item(s)`);
         
         ctx.fillStyle = 'black';
         
@@ -126,16 +122,18 @@ async function blurPDF() {
         const PADDING = 1 * SCALE;  // 1 PDF point of padding
         
         for (const bbox of pageBboxes) {
-          const x = (bbox.bbox.x * SCALE) - PADDING;
-          const width = (bbox.bbox.width * SCALE) + (PADDING * 2);
-          const height = (bbox.bbox.height * SCALE) + (PADDING * 2);
+          // Scale factor: 300 DPI = 300/72 = 4.166 scale from PDF points
+          const x = bbox.bbox.x * SCALE;
+          const width = bbox.bbox.width * SCALE + (PADDING * 2);
+          const height = bbox.bbox.height * SCALE + (PADDING * 2);
           
-          // Convert from PDF coordinates (bottom-left) to image coordinates (top-left)
-          const y = img.height - ((bbox.bbox.y + bbox.bbox.height) * SCALE) - PADDING;
+          // Convert from PDF coordinates (bottom-left origin) to canvas coordinates (top-left origin)
+          // PDF: (0,0) is bottom-left, y increases upward
+          // Canvas: (0,0) is top-left, y increases downward
+          // Formula: canvasY = imageHeight - (pdfY + pdfHeight)
+          const y = img.height - (bbox.bbox.y * SCALE) - (bbox.bbox.height * SCALE);
           
           ctx.fillRect(x, y, width, height);
-          
-          console.log(`      ✓ ${bbox.type}: "${bbox.originalValue}"`);
         }
       }
       
@@ -160,8 +158,6 @@ async function blurPDF() {
       
       // Clean up temp image
       await fs.unlink(tempImagePath);
-      
-      console.log(`   ✅ Page ${pageNum} flattened\n`);
     }
     
     // Save the redacted PDF
@@ -170,12 +166,7 @@ async function blurPDF() {
     const outputPath = path.join(SAVED_DIR, outputFilename);
     await fs.writeFile(outputPath, redactedPdfBytes);
     
-    console.log("=".repeat(80));
-    console.log(`\n✅ Success! Securely redacted PDF saved to:`);
-    console.log(`   📄 ${outputFilename}`);
-    console.log(`   📍 ${outputPath}\n`);
-    console.log(`🔒 Redacted ${allBboxes.length} sensitive area(s) across ${numPages} page(s)`);
-    console.log(`🛡️  PDF is now flattened - text cannot be copied or extracted!\n`);
+    console.log(`✅ Created ${outputFilename}`);
     
   } catch (error) {
     console.error("\n❌ Error during PDF blurring:", error.message);
