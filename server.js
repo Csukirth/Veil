@@ -27,10 +27,39 @@ const SIM_API_URL = "https://www.sim.ai/api/workflows/a8a04aa4-679b-4978-aad0-02
 // Serve saved files so you can open them in the browser too
 app.use("/saved", express.static(SAVE_DIR));
 
+app.post("/api/save-pdf", async (req, res) => {
+  try {
+    const { filename, pdfData } = req.body || {};
+    if (!pdfData) return res.status(400).send("Missing PDF data");
+    
+    // Ensure the saved directory exists
+    await fs.mkdir(SAVE_DIR, { recursive: true });
+    
+    const safe = (filename || "document.pdf").replace(/[^\w.\-]/g, "_");
+    const full = path.join(SAVE_DIR, safe);
+    
+    // Convert base64 to buffer
+    const buffer = Buffer.from(pdfData, 'base64');
+    await fs.writeFile(full, buffer);
+    
+    return res.json({ 
+      ok: true, 
+      path: `/saved/${safe}`,
+      filename: safe
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).send(e?.message || "Server error");
+  }
+});
+
 app.post("/api/save-text", async (req, res) => {
   try {
     const { filename, text } = req.body || {};
     if (!text) return res.status(400).send("Missing text");
+    
+    // Ensure the saved directory exists
+    await fs.mkdir(SAVE_DIR, { recursive: true });
     
     const safe = (filename || "extracted.txt").replace(/[^\w.\-]/g, "_");
     const full = path.join(SAVE_DIR, safe);
@@ -39,8 +68,14 @@ app.post("/api/save-text", async (req, res) => {
     let processedText = text;
     let processedPath = null;
     
-    // Process through SIM API if API key is available
-    if (SIM_API_KEY) {
+    // Only send .txt files to SIM API (skip JSON, masked files, etc.)
+    const shouldProcessWithSIM = SIM_API_KEY && 
+                                  safe.endsWith('.txt') && 
+                                  !safe.includes('_masked') && 
+                                  !safe.includes('_bboxes');
+    
+    // Process through SIM API if API key is available and file is eligible
+    if (shouldProcessWithSIM) {
       try {
         console.log("Processing text through SIM API...");
         // Send text as string input
@@ -74,6 +109,10 @@ app.post("/api/save-text", async (req, res) => {
               await fs.writeFile(processedFull, processedText, "utf8");
               processedPath = `/saved/${processedFilename}`;
               
+              // Also save as "extracted_masked.txt" for blur scripts
+              const genericMaskedPath = path.join(SAVE_DIR, "extracted_masked.txt");
+              await fs.writeFile(genericMaskedPath, processedText, "utf8");
+              
               console.log("Text masked successfully through SIM API");
             } else if (result.output && result.output.fileUrl) {
               // If output contains a file URL, download and save it
@@ -84,6 +123,10 @@ app.post("/api/save-text", async (req, res) => {
               const processedFull = path.join(SAVE_DIR, processedFilename);
               await fs.writeFile(processedFull, fileContent, "utf8");
               processedPath = `/saved/${processedFilename}`;
+              
+              // Also save as "extracted_masked.txt" for blur scripts
+              const genericMaskedPath = path.join(SAVE_DIR, "extracted_masked.txt");
+              await fs.writeFile(genericMaskedPath, fileContent, "utf8");
               
               console.log("Masked file downloaded and saved successfully");
             } else {
@@ -110,6 +153,95 @@ app.post("/api/save-text", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).send(e?.message || "Server error");
+  }
+});
+
+app.post("/api/blur-pdf", async (req, res) => {
+  try {
+    console.log("\n🔒 Starting automatic PDF blurring...");
+    
+    const { execSync } = await import("child_process");
+    
+    // Step 1: Find redacted bounding boxes
+    console.log("📍 Finding redacted bounding boxes...");
+    const findOutput = execSync("node find-redacted-bboxes.js", { 
+      cwd: __dirname,
+      encoding: "utf8"
+    });
+    console.log(findOutput);
+    
+    // Step 2: Blur the PDF
+    console.log("🖊️  Blurring PDF...");
+    const blurOutput = execSync("node blur-pdf-simple.js", { 
+      cwd: __dirname,
+      encoding: "utf8"
+    });
+    console.log(blurOutput);
+    
+    // Find the redacted PDF file
+    const files = await fs.readdir(SAVE_DIR);
+    const redactedPdf = files.find(f => f.includes("_REDACTED.pdf"));
+    
+    if (!redactedPdf) {
+      throw new Error("Redacted PDF not found");
+    }
+    
+    console.log("✅ PDF blurring complete!\n");
+    
+    // DEBUG: Clean up intermediate files (keep original PDF and redacted PDF only)
+    // COMMENTED OUT FOR DEBUGGING - Uncomment to enable auto-cleanup
+    /*
+    console.log("🧹 Cleaning up intermediate files...");
+    const filesToDelete = [
+      "extracted.txt",
+      "extracted_masked.txt", 
+      "extracted_bboxes.json",
+      "redacted_bboxes.json"
+    ];
+    
+    for (const filename of filesToDelete) {
+      try {
+        const filepath = path.join(SAVE_DIR, filename);
+        await fs.unlink(filepath);
+        console.log(`   ✓ Deleted ${filename}`);
+      } catch (err) {
+        // File might not exist, that's okay
+        if (err.code !== 'ENOENT') {
+          console.warn(`   ⚠️  Could not delete ${filename}`);
+        }
+      }
+    }
+    
+    // Also delete any bboxes.json files that match the pattern
+    const allFiles = await fs.readdir(SAVE_DIR);
+    for (const file of allFiles) {
+      if (file.endsWith('_bboxes.json')) {
+        try {
+          await fs.unlink(path.join(SAVE_DIR, file));
+          console.log(`   ✓ Deleted ${file}`);
+        } catch (err) {
+          console.warn(`   ⚠️  Could not delete ${file}`);
+        }
+      }
+    }
+    
+    console.log("✨ Cleanup complete!\n");
+    */
+    console.log("🔍 DEBUG MODE: Keeping all intermediate files for inspection\n");
+    
+    return res.json({
+      ok: true,
+      message: "PDF successfully blurred",
+      redactedPath: `/saved/${redactedPdf}`,
+      filename: redactedPdf
+    });
+    
+  } catch (e) {
+    console.error("❌ Blur error:", e.message);
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || "Failed to blur PDF"
+    });
   }
 });
 
