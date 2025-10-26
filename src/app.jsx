@@ -124,6 +124,10 @@ function DocumentUploader() {
       // 2) If empty/near-empty, OCR each page image instead
       const needsOCR = finalText.replace(/\s+/g, "").length < 5;
       if (needsOCR) {
+        console.log("📷 PDF appears to be image-based, using OCR...");
+        // Clear any empty bboxes from text-based extraction
+        allBoundingBoxes.length = 0;
+        
         const ocrTexts = [];
         for (let i = 1; i <= pdf.numPages; i++) {
           const page = await pdf.getPage(i);
@@ -141,13 +145,48 @@ function DocumentUploader() {
             logger: () => {},
           });
           ocrTexts.push((data.text || "").trim());
+          
+          // Extract bounding boxes from OCR results (word-level)
+          if (data.words) {
+            data.words.forEach((word) => {
+              if (!word.text || word.text.trim() === "") return;
+              
+              // Tesseract bbox is in image coordinates (top-left origin)
+              // We need to convert to PDF coordinates (bottom-left origin)
+              const bbox = word.bbox;
+              const pdfViewport = page.getViewport({ scale: 1.0 }); // Get unscaled PDF dimensions
+              
+              // Scale factor from rendered canvas to PDF
+              const scaleX = pdfViewport.width / canvas.width;
+              const scaleY = pdfViewport.height / canvas.height;
+              
+              // Convert coordinates
+              const x = bbox.x0 * scaleX;
+              const width = (bbox.x1 - bbox.x0) * scaleX;
+              const height = (bbox.y1 - bbox.y0) * scaleY;
+              // Convert from top-left origin (canvas) to bottom-left origin (PDF)
+              const y = pdfViewport.height - (bbox.y1 * scaleY);
+              
+              allBoundingBoxes.push({
+                page: i,
+                text: word.text,
+                bbox: {
+                  x: Math.round(x),
+                  y: Math.round(y),
+                  width: Math.round(width),
+                  height: Math.round(height)
+                }
+              });
+            });
+          }
         }
         finalText = ocrTexts.join("\n\n").trim();
+        console.log(`📦 Extracted ${allBoundingBoxes.length} bounding boxes from OCR`);
       }
 
       const suggested = (docName?.replace(/\.[^.]+$/, "") || "extracted") + ".txt";
 
-      // Save extracted text
+      // Save extracted text with specific filename
       const res = await fetch("/api/save-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -161,6 +200,13 @@ function DocumentUploader() {
 
       const data = await res.json();
       setDownHref(data.path);
+      
+      // Also save as "extracted.txt" for blur scripts
+      await fetch("/api/save-text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: "extracted.txt", text: finalText }),
+      });
       
       // Save the original PDF file
       const base64Pdf = btoa(
@@ -180,20 +226,33 @@ function DocumentUploader() {
       // Save bounding boxes for all text items
       if (allBoundingBoxes.length > 0) {
         const bboxFilename = (docName?.replace(/\.[^.]+$/, "") || "extracted") + "_bboxes.json";
+        const bboxContent = JSON.stringify({
+          filename: f.name,
+          totalPages: pdf.numPages,
+          boundingBoxes: allBoundingBoxes,
+          timestamp: new Date().toISOString()
+        }, null, 2);
+        
+        // Save with specific filename
         await fetch("/api/save-text", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             filename: bboxFilename,
-            text: JSON.stringify({
-              filename: f.name,
-              totalPages: pdf.numPages,
-              boundingBoxes: allBoundingBoxes,
-              timestamp: new Date().toISOString()
-            }, null, 2)
+            text: bboxContent
           }),
         });
         console.log(`Saved ${allBoundingBoxes.length} bounding boxes to ${bboxFilename}`);
+        
+        // Also save as "extracted_bboxes.json" for blur scripts
+        await fetch("/api/save-text", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: "extracted_bboxes.json",
+            text: bboxContent
+          }),
+        });
         
         // Wait a moment for SIM API to finish processing
         console.log("⏳ Waiting for SIM API to complete redaction...");

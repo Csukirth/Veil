@@ -6,12 +6,36 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { PDFDocument } from "pdf-lib";
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { createCanvas } from "canvas";
+import { createCanvas, Image } from "canvas";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const SAVED_DIR = path.join(__dirname, "saved");
+
+// Canvas factory for Node.js PDF.js rendering
+class NodeCanvasFactory {
+  create(width, height) {
+    const canvas = createCanvas(width, height);
+    const context = canvas.getContext("2d");
+    return {
+      canvas,
+      context,
+    };
+  }
+
+  reset(canvasAndContext, width, height) {
+    canvasAndContext.canvas.width = width;
+    canvasAndContext.canvas.height = height;
+  }
+
+  destroy(canvasAndContext) {
+    canvasAndContext.canvas.width = 0;
+    canvasAndContext.canvas.height = 0;
+    canvasAndContext.canvas = null;
+    canvasAndContext.context = null;
+  }
+}
 
 async function blurPDF() {
   try {
@@ -82,16 +106,26 @@ async function blurPDF() {
       console.log(`📄 Processing Page ${pageNum}...`);
       
       const page = await pdfDoc.getPage(pageNum);
-      const viewport = page.getViewport({ scale: 2.0 }); // Higher scale for better quality
+      const RENDER_SCALE = 2.0; // Higher scale for better quality
+      const viewport = page.getViewport({ scale: RENDER_SCALE });
+      const originalViewport = page.getViewport({ scale: 1.0 }); // Get original dimensions
+      
+      console.log(`   📐 Original page size: ${originalViewport.width}×${originalViewport.height}`);
+      console.log(`   📐 Render size: ${viewport.width}×${viewport.height}`);
       
       // Create canvas for rendering
       const canvas = createCanvas(viewport.width, viewport.height);
       const context = canvas.getContext('2d');
       
-      // Render PDF page to canvas
+      // Fill with white background first (PDFs default to transparent)
+      context.fillStyle = 'white';
+      context.fillRect(0, 0, viewport.width, viewport.height);
+      
+      // Render PDF page to canvas with Node.js canvas factory
       await page.render({
         canvasContext: context,
-        viewport: viewport
+        viewport: viewport,
+        canvasFactory: new NodeCanvasFactory()
       }).promise;
       
       // Draw black rectangles over sensitive areas
@@ -122,17 +156,26 @@ async function blurPDF() {
       // Convert canvas to PNG buffer
       const imgBuffer = canvas.toBuffer('image/png');
       
+      // DEBUG: Save canvas as image to check rendering
+      const debugImagePath = path.join(SAVED_DIR, `debug_page_${pageNum}.png`);
+      await fs.writeFile(debugImagePath, imgBuffer);
+      console.log(`   🔍 DEBUG: Saved canvas to ${debugImagePath}`);
+      
       // Embed the image in the new PDF
       const pngImage = await newPdfDoc.embedPng(imgBuffer);
-      const pngDims = pngImage.scale(0.5); // Scale back to original size
       
-      const newPage = newPdfDoc.addPage([pngDims.width, pngDims.height]);
+      // Create page with original PDF dimensions (before scaling)
+      const newPage = newPdfDoc.addPage([originalViewport.width, originalViewport.height]);
+      
+      // Draw the image scaled back to original size
       newPage.drawImage(pngImage, {
         x: 0,
         y: 0,
-        width: pngDims.width,
-        height: pngDims.height,
+        width: originalViewport.width,
+        height: originalViewport.height,
       });
+      
+      console.log(`   📐 Final PDF page size: ${originalViewport.width}×${originalViewport.height}`);
       
       console.log(`   ✅ Page ${pageNum} flattened\n`);
     }

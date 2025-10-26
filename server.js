@@ -68,8 +68,14 @@ app.post("/api/save-text", async (req, res) => {
     let processedText = text;
     let processedPath = null;
     
-    // Process through SIM API if API key is available
-    if (SIM_API_KEY) {
+    // Only send .txt files to SIM API (skip JSON, masked files, etc.)
+    const shouldProcessWithSIM = SIM_API_KEY && 
+                                  safe.endsWith('.txt') && 
+                                  !safe.includes('_masked') && 
+                                  !safe.includes('_bboxes');
+    
+    // Process through SIM API if API key is available and file is eligible
+    if (shouldProcessWithSIM) {
       try {
         console.log("Processing text through SIM API...");
         // Send text as string input
@@ -103,6 +109,10 @@ app.post("/api/save-text", async (req, res) => {
               await fs.writeFile(processedFull, processedText, "utf8");
               processedPath = `/saved/${processedFilename}`;
               
+              // Also save as "extracted_masked.txt" for blur scripts
+              const genericMaskedPath = path.join(SAVE_DIR, "extracted_masked.txt");
+              await fs.writeFile(genericMaskedPath, processedText, "utf8");
+              
               console.log("Text masked successfully through SIM API");
             } else if (result.output && result.output.fileUrl) {
               // If output contains a file URL, download and save it
@@ -113,6 +123,10 @@ app.post("/api/save-text", async (req, res) => {
               const processedFull = path.join(SAVE_DIR, processedFilename);
               await fs.writeFile(processedFull, fileContent, "utf8");
               processedPath = `/saved/${processedFilename}`;
+              
+              // Also save as "extracted_masked.txt" for blur scripts
+              const genericMaskedPath = path.join(SAVE_DIR, "extracted_masked.txt");
+              await fs.writeFile(genericMaskedPath, fileContent, "utf8");
               
               console.log("Masked file downloaded and saved successfully");
             } else {
@@ -158,7 +172,7 @@ app.post("/api/blur-pdf", async (req, res) => {
     
     // Step 2: Blur the PDF
     console.log("🖊️  Blurring PDF...");
-    const blurOutput = execSync("node blur-pdf.js", { 
+    const blurOutput = execSync("node blur-pdf-simple.js", { 
       cwd: __dirname,
       encoding: "utf8"
     });
@@ -174,7 +188,9 @@ app.post("/api/blur-pdf", async (req, res) => {
     
     console.log("✅ PDF blurring complete!\n");
     
-    // Clean up intermediate files (keep original PDF and redacted PDF only)
+    // DEBUG: Clean up intermediate files (keep original PDF and redacted PDF only)
+    // COMMENTED OUT FOR DEBUGGING - Uncomment to enable auto-cleanup
+    /*
     console.log("🧹 Cleaning up intermediate files...");
     const filesToDelete = [
       "extracted.txt",
@@ -210,6 +226,8 @@ app.post("/api/blur-pdf", async (req, res) => {
     }
     
     console.log("✨ Cleanup complete!\n");
+    */
+    console.log("🔍 DEBUG MODE: Keeping all intermediate files for inspection\n");
     
     return res.json({
       ok: true,
