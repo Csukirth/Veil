@@ -13,7 +13,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(express.json({ limit: "10mb" }));
+app.use(express.json({ limit: "500mb" })); // Increased for video uploads
 
 // Load environment variables
 import dotenv from "dotenv";
@@ -950,24 +950,54 @@ app.post("/api/process-dashcam", async (req, res) => {
     await fs.writeFile(inputPath, videoBuffer);
     console.log(`💾 Saved video: ${videoFilename} (${videoBuffer.length} bytes)`);
     
-    // Check if Colab API is accessible
-    try {
-      const healthCheck = await fetch(`${colabUrl}/health`, { timeout: 5000 });
-      if (!healthCheck.ok) {
-        throw new Error("Health check failed");
+    // Check if Colab API is accessible (with retry)
+    console.log("🔍 Checking Colab API connection...");
+    let healthCheckPassed = false;
+    let lastError = null;
+    
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        console.log(`   Attempt ${attempt}/3...`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000); // Increased to 10 seconds
+        
+        const healthCheck = await fetch(`${colabUrl}/health`, { 
+          signal: controller.signal 
+        });
+        clearTimeout(timeoutId);
+        
+        if (healthCheck.ok) {
+          healthCheckPassed = true;
+          console.log("✅ Colab API is accessible");
+          break;
+        }
+      } catch (error) {
+        lastError = error.message;
+        console.warn(`   ⚠️  Attempt ${attempt} failed: ${error.message}`);
+        if (attempt < 3) {
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds before retry
+        }
       }
-    } catch (error) {
-      return res.status(400).json({
-        ok: false,
-        error: `Cannot connect to Colab API at ${colabUrl}. Make sure your Colab notebook is running. Error: ${error.message}`
-      });
+    }
+    
+    if (!healthCheckPassed) {
+      console.error("❌ Colab API check failed after 3 attempts:", lastError);
+      console.warn("⚠️  Continuing anyway - will fail at processing if Colab is really down");
+      // Don't fail here - let it try processing and fail there if needed
+      // return res.status(400).json({
+      //   ok: false,
+      //   error: `Cannot connect to Colab API at ${colabUrl}. Error: ${lastError}`
+      // });
     }
     
     // Check if FFmpeg is installed
+    console.log("🔍 Checking FFmpeg installation...");
     try {
       const { execSync } = await import("child_process");
       execSync("ffmpeg -version", { stdio: "ignore" });
+      console.log("✅ FFmpeg is installed");
     } catch (err) {
+      console.error("❌ FFmpeg not found");
       return res.status(500).json({
         ok: false,
         error: "FFmpeg is not installed. Please install it with: brew install ffmpeg"
@@ -975,17 +1005,29 @@ app.post("/api/process-dashcam", async (req, res) => {
     }
 
     // Process video using the dashcam processor
-    const { processDashcamVideo } = await import("./process-dashcam-video.js");
-    
-    const result = await processDashcamVideo(
-      inputPath,
-      outputPath,
-      mode,
-      colabUrl,
-      (progress, message) => {
-        console.log(`   [${progress.toFixed(0)}%] ${message}`);
-      }
-    );
+    console.log("📥 Loading video processor module...");
+    let result;
+    try {
+      const { processDashcamVideo } = await import("./process-dashcam-video.js");
+      console.log("✅ Module loaded, starting processing...");
+      
+      result = await processDashcamVideo(
+        inputPath,
+        outputPath,
+        mode,
+        colabUrl,
+        (progress, message) => {
+          console.log(`   [${progress.toFixed(0)}%] ${message}`);
+        }
+      );
+    } catch (procError) {
+      console.error("❌ Processing error:", procError);
+      console.error("Stack trace:", procError.stack);
+      return res.status(500).json({
+        ok: false,
+        error: `Processing failed: ${procError.message}`
+      });
+    }
     
     // Clean up original video (keep only redacted version)
     try {

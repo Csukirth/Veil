@@ -911,18 +911,20 @@ function DashcamProcessor() {
   const [progress, setProgress] = useState(0);
   const [progressText, setProgressText] = useState("");
   const [error, setError] = useState("");
-  const [colabUrl, setColabUrl] = useState("");
-  const [showColabModal, setShowColabModal] = useState(false);
-  const [processingMode, setProcessingMode] = useState("blur");
+  const [detectionApiUrl, setDetectionApiUrl] = useState("");
+  const [showApiModal, setShowApiModal] = useState(false);
   const [showVideoPlayer, setShowVideoPlayer] = useState(false);
 
   const handleVideoClick = () => {
-    // Check if Colab URL is set
-    const savedColabUrl = localStorage.getItem("colabUrl");
-    if (savedColabUrl) {
-      setColabUrl(savedColabUrl);
+    // Check if Detection API URL is set
+    const savedApiUrl = localStorage.getItem("detectionApiUrl");
+    if (!savedApiUrl) {
+      // Show config modal first
+      setShowApiModal(true);
+      return;
     }
-    // Always allow file selection - we'll check URL when processing
+    // URL is configured, proceed to file selection
+    setDetectionApiUrl(savedApiUrl);
     videoInputRef.current?.click();
   };
 
@@ -942,17 +944,6 @@ function DashcamProcessor() {
       return;
     }
 
-    // Check if Colab URL is configured
-    const savedColabUrl = localStorage.getItem("colabUrl");
-    if (!savedColabUrl) {
-      // Store the file temporarily and show config modal
-      setVideoName(f.name);
-      setShowColabModal(true);
-      // Store file in state to process after URL is saved
-      window._pendingVideoFile = f;
-      return;
-    }
-
     setVideoName(f.name);
     setLoading(true);
     setProgressText("Uploading video...");
@@ -965,7 +956,7 @@ function DashcamProcessor() {
       );
 
       setProgress(10);
-      setProgressText("Processing video with Colab API...");
+      setProgressText("Processing video with detection API...");
 
       // Send to backend for processing
       const res = await fetch("/api/process-dashcam", {
@@ -974,14 +965,15 @@ function DashcamProcessor() {
         body: JSON.stringify({
           filename: f.name,
           videoData: base64Video,
-          mode: processingMode,
-          colabUrl: colabUrl || localStorage.getItem("colabUrl")
+          mode: "blackout",
+          colabUrl: detectionApiUrl || localStorage.getItem("detectionApiUrl")
         }),
       });
 
       if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ error: "Unknown error" }));
-        throw new Error(errorData.error || `Processing failed: ${res.status}`);
+        const errorData = await res.json().catch(() => ({ error: `Server error: ${res.status}` }));
+        console.error("Backend error:", errorData);
+        throw new Error(errorData.error || `Processing failed with status ${res.status}`);
       }
 
       const data = await res.json();
@@ -994,77 +986,30 @@ function DashcamProcessor() {
       console.log(`📊 Stats:`, data.stats);
 
     } catch (err) {
-      console.error(err);
-      setError(err?.message || "Failed to process video.");
+      console.error("Processing error:", err);
+      const errorMsg = err?.message || "Failed to process video. Check console for details.";
+      setError(errorMsg);
+      alert(`Error: ${errorMsg}`); // Show alert for visibility
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSaveColabUrl = async () => {
-    if (!colabUrl.trim()) {
-      setError("Please enter your Colab API URL");
+  const handleSaveApiUrl = () => {
+    if (!detectionApiUrl.trim()) {
+      setError("Please enter your Detection API URL");
       return;
     }
 
     // Validate URL format
     try {
-      new URL(colabUrl);
-      localStorage.setItem("colabUrl", colabUrl);
-      setShowColabModal(false);
+      new URL(detectionApiUrl);
+      localStorage.setItem("detectionApiUrl", detectionApiUrl);
+      setShowApiModal(false);
       setError("");
       
-      // If there's a pending video file, process it now
-      if (window._pendingVideoFile) {
-        const f = window._pendingVideoFile;
-        window._pendingVideoFile = null;
-        
-        setLoading(true);
-        setProgressText("Uploading video...");
-
-        try {
-          // Convert video to base64
-          const buf = await f.arrayBuffer();
-          const base64Video = btoa(
-            new Uint8Array(buf).reduce((data, byte) => data + String.fromCharCode(byte), '')
-          );
-
-          setProgress(10);
-          setProgressText("Processing video with Colab API...");
-
-          // Send to backend for processing
-          const res = await fetch("/api/process-dashcam", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              filename: f.name,
-              videoData: base64Video,
-              mode: processingMode,
-              colabUrl: colabUrl
-            }),
-          });
-
-          if (!res.ok) {
-            const errorData = await res.json().catch(() => ({ error: "Unknown error" }));
-            throw new Error(errorData.error || `Processing failed: ${res.status}`);
-          }
-
-          const data = await res.json();
-          
-          setProgress(100);
-          setProgressText("Complete!");
-          setProcessedVideoUrl(data.redactedPath);
-          
-          console.log(`✅ Dashcam video processed: ${data.filename}`);
-          console.log(`📊 Stats:`, data.stats);
-
-        } catch (err) {
-          console.error(err);
-          setError(err?.message || "Failed to process video.");
-        } finally {
-          setLoading(false);
-        }
-      }
+      // Trigger file picker after saving URL
+      setTimeout(() => videoInputRef.current?.click(), 100);
     } catch (e) {
       setError("Please enter a valid URL (e.g., https://xyz.trycloudflare.com)");
     }
@@ -1079,11 +1024,11 @@ function DashcamProcessor() {
           Veil Dashcam. Protect License Plates.
         </PrimaryButton>
         
-        {localStorage.getItem("colabUrl") && (
+        {localStorage.getItem("detectionApiUrl") && (
           <button
             onClick={() => {
-              setColabUrl(localStorage.getItem("colabUrl") || "");
-              setShowColabModal(true);
+              setDetectionApiUrl(localStorage.getItem("detectionApiUrl") || "");
+              setShowApiModal(true);
             }}
             style={{
               padding: '0.5rem 1rem',
@@ -1104,7 +1049,7 @@ function DashcamProcessor() {
               e.currentTarget.style.color = '#9ca3af';
             }}
           >
-            ⚙️ Change Colab URL
+            ⚙️ Change API URL
           </button>
         )}
       </div>
@@ -1210,15 +1155,15 @@ function DashcamProcessor() {
         </div>
       )}
 
-      {/* Colab URL Configuration Modal */}
-      {showColabModal && (
-        <div className="modal-overlay" onClick={() => setShowColabModal(false)}>
+      {/* Detection API Configuration Modal */}
+      {showApiModal && (
+        <div className="modal-overlay" onClick={() => setShowApiModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <div className="modal-header">
-              <h2>🤖 Configure Colab API</h2>
+              <h2>🤖 Configure Detection API</h2>
               <button 
                 className="modal-close" 
-                onClick={() => setShowColabModal(false)}
+                onClick={() => setShowApiModal(false)}
                 aria-label="Close modal"
               >
                 <X size={24} />
@@ -1227,57 +1172,37 @@ function DashcamProcessor() {
 
             <div className="modal-body">
               <p className="modal-description">
-                Enter your Google Colab API URL. This is only needed once - it will be saved for future videos.
-                Get the URL from your running Colab notebook with the YOLOv8 license plate detector.
+                Enter your License Plate Detection API URL. This is only needed once - it will be saved for future videos.
+                Use your local YOLO server (http://localhost:8001) or any detection API endpoint.
               </p>
 
               <div className="keyword-input-section" style={{ marginTop: '1.5rem' }}>
-                <label className="input-label">Colab API URL</label>
+                <label className="input-label">Detection API URL</label>
                 <input
                   type="text"
                   className="url-input"
-                  placeholder="https://xyz.trycloudflare.com or http://localhost:8000"
-                  value={colabUrl}
-                  onChange={(e) => setColabUrl(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSaveColabUrl()}
+                  placeholder="http://localhost:8001"
+                  value={detectionApiUrl}
+                  onChange={(e) => setDetectionApiUrl(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSaveApiUrl()}
                 />
               </div>
 
-              <div className="keyword-input-section" style={{ marginTop: '1rem' }}>
-                <label className="input-label">Processing Mode</label>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                  <button
-                    onClick={() => setProcessingMode("blur")}
-                    className={processingMode === "blur" ? "mode-toggle-btn active" : "mode-toggle-btn"}
-                    style={{ flex: 1 }}
-                  >
-                    🌫️ Blur
-                  </button>
-                  <button
-                    onClick={() => setProcessingMode("blackout")}
-                    className={processingMode === "blackout" ? "mode-toggle-btn active" : "mode-toggle-btn"}
-                    style={{ flex: 1 }}
-                  >
-                    ⬛ Blackout
-                  </button>
-                </div>
-              </div>
-
               <div className="info-box" style={{ marginTop: '1.5rem' }}>
-                <strong>How to get your Colab URL:</strong>
+                <strong>🚀 Running Local YOLO Server:</strong>
                 <ol>
-                  <li>Run your Google Colab notebook with the YOLOv8 FastAPI server</li>
-                  <li>Wait for "Application startup complete" message</li>
-                  <li>Get the public URL from <code>output.eval_js("google.colab.kernel.proxyPort(8000)")</code></li>
-                  <li>Or use <code>http://localhost:8000</code> if running locally</li>
+                  <li>In terminal: <code>cd Veil && python3 yolo_server.py</code></li>
+                  <li>Wait for "Uvicorn running on http://127.0.0.1:8001"</li>
+                  <li>Enter: <code>http://localhost:8001</code></li>
+                  <li>License plates will be automatically blacked out</li>
                 </ol>
               </div>
 
               <div className="modal-actions">
-                <SecondaryButton onClick={() => setShowColabModal(false)}>
+                <SecondaryButton onClick={() => setShowApiModal(false)}>
                   Cancel
                 </SecondaryButton>
-                <PrimaryButton onClick={handleSaveColabUrl}>
+                <PrimaryButton onClick={handleSaveApiUrl}>
                   <Video size={18} />
                   Save & Continue
                 </PrimaryButton>

@@ -6,7 +6,7 @@ import fs from "fs/promises";
 import path from "path";
 import { spawn } from "child_process";
 import fetch from "node-fetch";
-import { FormData } from "formdata-node";
+import { FormData, File } from "formdata-node";
 
 const COLAB_API_URL = process.env.COLAB_API_URL || "http://localhost:8000";
 
@@ -87,11 +87,13 @@ async function detectLicensePlates(framePath, colabUrl) {
   try {
     const imageBuffer = await fs.readFile(framePath);
     
-    const formData = new FormData();
-    formData.set("file", imageBuffer, {
-      filename: path.basename(framePath),
-      contentType: "image/jpeg"
+    // Create a proper File object for Node.js FormData
+    const file = new File([imageBuffer], path.basename(framePath), {
+      type: "image/jpeg"
     });
+    
+    const formData = new FormData();
+    formData.set("file", file);
     
     const response = await fetch(`${colabUrl}/detect`, {
       method: "POST",
@@ -228,16 +230,9 @@ export async function processDashcamVideo(inputPath, outputPath, mode = "blur", 
   console.log(`🌐 Colab API: ${colabUrl}`);
   console.log("=".repeat(70));
   
-  // Check if Colab API is accessible
-  try {
-    const healthCheck = await fetch(`${colabUrl}/health`);
-    if (!healthCheck.ok) {
-      throw new Error("Colab API health check failed");
-    }
-    console.log("✅ Colab API is accessible");
-  } catch (error) {
-    throw new Error(`Cannot connect to Colab API at ${colabUrl}. Make sure your Colab notebook is running and the URL is correct. Error: ${error.message}`);
-  }
+  // Skip health check - will test with actual detection call instead
+  console.log("⏭️  Skipping health check - will validate with first frame detection");
+  // The /health endpoint seems to hang, but /detect works fine
   
   // Create temporary directories
   const tempDir = path.join(path.dirname(outputPath), ".temp_" + Date.now());
