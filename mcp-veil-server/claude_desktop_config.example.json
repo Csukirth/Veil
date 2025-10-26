@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "◈ VEIL": {
+      "command": "node",
+      "args": [
+        "/Users/spartan/calhacks/veil/mcp-veil-server/build/index.js"
+      ],
+      "env": {
+        "SIM_API_KEY": "your_sim_api_key_here"
+      }
+    }
+  }
+}
