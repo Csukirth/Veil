@@ -9,6 +9,8 @@ import {
   Link as LinkIcon,
   Loader2,
   X,
+  Video,
+  Play,
 } from "lucide-react";
 
 // --- PDF.js setup (client-side extraction) ---
@@ -56,6 +58,8 @@ function DocumentUploader() {
   const [keywordQuery, setKeywordQuery] = useState("");
   const [maxResults, setMaxResults] = useState(5);
   const [searchResults, setSearchResults] = useState([]);
+  const [showPdfViewer, setShowPdfViewer] = useState(false);
+  const [viewingPdfUrl, setViewingPdfUrl] = useState("");
 
   const handleDocClick = () => docInputRef.current?.click();
 
@@ -494,7 +498,26 @@ function DocumentUploader() {
           <h3 style={{ color: '#10b981', marginBottom: '1rem', fontSize: '1.2em' }}>
             ✅ Document Protected
           </h3>
-          <div className="download-links">
+          <div className="download-links" style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => {
+                setViewingPdfUrl(redactedHref);
+                setShowPdfViewer(true);
+              }}
+              className="download-link"
+              style={{ 
+                background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                fontSize: '1.1em',
+                fontWeight: '600',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                border: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <FileText size={18} /> View PDF 👁️
+            </button>
             <a
               href={redactedHref}
               download
@@ -508,7 +531,7 @@ function DocumentUploader() {
                 gap: '0.5rem'
               }}
             >
-              <FileText size={18} /> Download Redacted PDF 🔒
+              <FileText size={18} /> Download PDF 🔒
             </a>
           </div>
         </div>
@@ -520,46 +543,211 @@ function DocumentUploader() {
           <h3 style={{ color: '#10b981', marginBottom: '1rem', fontSize: '1.2em', textAlign: 'center' }}>
             ✅ {searchResults.length} Document(s) Protected
           </h3>
-          <div style={{ 
-            display: 'grid', 
-            gap: '1rem', 
-            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
-            marginTop: '1rem'
-          }}>
-            {searchResults.map((result, idx) => (
-              <div key={idx} style={{
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(16, 185, 129, 0.3)',
-                borderRadius: '8px',
-                padding: '1rem',
-                transition: 'all 0.2s'
-              }}>
-                <div style={{ marginBottom: '0.75rem' }}>
-                  <div style={{ fontSize: '0.9em', color: '#9ca3af', marginBottom: '0.25rem' }}>
-                    {result.domain || 'Unknown Source'}
+          
+          <div style={{ display: 'flex', gap: '1rem', flexWrap: showPdfViewer ? 'nowrap' : 'wrap' }}>
+            {/* PDF List/Grid */}
+            <div style={{ 
+              flex: showPdfViewer ? '0 0 350px' : '1',
+              display: showPdfViewer ? 'flex' : 'grid',
+              flexDirection: showPdfViewer ? 'column' : undefined,
+              gap: '1rem',
+              gridTemplateColumns: showPdfViewer ? undefined : 'repeat(auto-fill, minmax(300px, 1fr))'
+            }}>
+              {searchResults.map((result, idx) => (
+                <div key={idx} style={{
+                  background: 'rgba(255,255,255,0.05)',
+                  border: viewingPdfUrl === result.redactedPath ? '2px solid #3b82f6' : '1px solid rgba(16, 185, 129, 0.3)',
+                  borderRadius: '8px',
+                  padding: '1rem',
+                  transition: 'all 0.2s',
+                  cursor: 'pointer'
+                }}
+                onClick={() => {
+                  setViewingPdfUrl(result.redactedPath);
+                  setShowPdfViewer(true);
+                }}
+                >
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <div style={{ fontSize: '0.85em', color: '#9ca3af', marginBottom: '0.25rem' }}>
+                      {result.domain || 'Unknown Source'}
+                    </div>
+                    <div style={{ 
+                      fontSize: showPdfViewer ? '0.9em' : '1em', 
+                      color: '#fff', 
+                      fontWeight: '500',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      display: '-webkit-box',
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: 'vertical'
+                    }}>
+                      {result.title || result.filename}
+                    </div>
                   </div>
-                  <div style={{ fontSize: '1em', color: '#fff', fontWeight: '500' }}>
-                    {result.title || result.filename}
+                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setViewingPdfUrl(result.redactedPath);
+                        setShowPdfViewer(true);
+                      }}
+                      className="download-link"
+                      style={{ 
+                        background: viewingPdfUrl === result.redactedPath ? 
+                          'linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%)' : 
+                          'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                        fontSize: '0.85em',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        flex: 1,
+                        justifyContent: 'center',
+                        border: 'none',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <FileText size={12} /> {viewingPdfUrl === result.redactedPath ? 'Viewing' : 'View'}
+                    </button>
+                    <a
+                      href={result.redactedPath}
+                      download
+                      onClick={(e) => e.stopPropagation()}
+                      className="download-link"
+                      style={{ 
+                        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                        fontSize: '0.85em',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        flex: 1,
+                        justifyContent: 'center'
+                      }}
+                    >
+                      <FileText size={12} /> Download
+                    </a>
                   </div>
                 </div>
-                <a
-                  href={result.redactedPath}
-                  download
-                  className="download-link"
-                  style={{ 
-                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-                    fontSize: '0.9em',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                    width: '100%',
-                    justifyContent: 'center'
-                  }}
-                >
-                  <FileText size={14} /> Download 🔒
-                </a>
+              ))}
+            </div>
+
+            {/* Inline PDF Viewer for Multiple Results */}
+            {showPdfViewer && (
+              <div style={{ 
+                flex: '1',
+                minWidth: 0,
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(59, 130, 246, 0.3)',
+                borderRadius: '12px',
+                overflow: 'hidden'
+              }}>
+                <div style={{ 
+                  padding: '1rem',
+                  background: 'rgba(59, 130, 246, 0.1)',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  borderBottom: '1px solid rgba(59, 130, 246, 0.3)'
+                }}>
+                  <h3 style={{ margin: 0, fontSize: '1em', color: '#3b82f6' }}>
+                    📄 PDF Preview
+                  </h3>
+                  <button 
+                    onClick={() => setShowPdfViewer(false)}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#9ca3af',
+                      cursor: 'pointer',
+                      padding: '0.5rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      transition: 'color 0.2s'
+                    }}
+                    onMouseOver={(e) => e.currentTarget.style.color = '#fff'}
+                    onMouseOut={(e) => e.currentTarget.style.color = '#9ca3af'}
+                    aria-label="Close viewer"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                <div style={{ 
+                  aspectRatio: '1',
+                  background: '#1f2937',
+                  position: 'relative',
+                  maxHeight: '600px',
+                  overflow: 'hidden'
+                }}>
+                  <iframe
+                    src={viewingPdfUrl}
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      border: 'none'
+                    }}
+                    title="PDF Viewer"
+                  />
+                </div>
               </div>
-            ))}
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Compact PDF Viewer (for single documents only) */}
+      {showPdfViewer && searchResults.length === 0 && (
+        <div style={{ 
+          marginTop: '2rem',
+          background: 'rgba(255,255,255,0.05)',
+          border: '1px solid rgba(59, 130, 246, 0.3)',
+          borderRadius: '12px',
+          overflow: 'hidden'
+        }}>
+          <div style={{ 
+            padding: '1rem',
+            background: 'rgba(59, 130, 246, 0.1)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            borderBottom: '1px solid rgba(59, 130, 246, 0.3)'
+          }}>
+            <h3 style={{ margin: 0, fontSize: '1em', color: '#3b82f6' }}>
+              📄 Redacted PDF Preview
+            </h3>
+            <button 
+              onClick={() => setShowPdfViewer(false)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#9ca3af',
+                cursor: 'pointer',
+                padding: '0.5rem',
+                display: 'flex',
+                alignItems: 'center',
+                transition: 'color 0.2s'
+              }}
+              onMouseOver={(e) => e.currentTarget.style.color = '#fff'}
+              onMouseOut={(e) => e.currentTarget.style.color = '#9ca3af'}
+              aria-label="Close viewer"
+            >
+              <X size={20} />
+            </button>
+          </div>
+          <div style={{ 
+            aspectRatio: '1',
+            background: '#1f2937',
+            position: 'relative',
+            maxHeight: '600px',
+            overflow: 'hidden'
+          }}>
+            <iframe
+              src={viewingPdfUrl}
+              style={{
+                width: '100%',
+                height: '100%',
+                border: 'none'
+              }}
+              title="PDF Viewer"
+            />
           </div>
         </div>
       )}
@@ -715,8 +903,397 @@ function DocumentUploader() {
   );
 }
 
+function DashcamProcessor() {
+  const videoInputRef = useRef(null);
+  const [videoName, setVideoName] = useState("");
+  const [processedVideoUrl, setProcessedVideoUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressText, setProgressText] = useState("");
+  const [error, setError] = useState("");
+  const [colabUrl, setColabUrl] = useState("");
+  const [showColabModal, setShowColabModal] = useState(false);
+  const [processingMode, setProcessingMode] = useState("blur");
+  const [showVideoPlayer, setShowVideoPlayer] = useState(false);
+
+  const handleVideoClick = () => {
+    // Check if Colab URL is set
+    const savedColabUrl = localStorage.getItem("colabUrl");
+    if (savedColabUrl) {
+      setColabUrl(savedColabUrl);
+    }
+    // Always allow file selection - we'll check URL when processing
+    videoInputRef.current?.click();
+  };
+
+  const onVideoChange = async (e) => {
+    setError("");
+    setProcessedVideoUrl("");
+    setProgress(0);
+    setProgressText("");
+    const f = e.target.files?.[0];
+    if (!f) return;
+
+    // Check for video file types
+    const isVideo = f.type.startsWith("video/") || 
+                   f.name.toLowerCase().match(/\.(mp4|mov|avi|mkv|webm)$/);
+    if (!isVideo) {
+      setError("Please upload a video file (.mp4, .mov, .avi, etc.)");
+      return;
+    }
+
+    // Check if Colab URL is configured
+    const savedColabUrl = localStorage.getItem("colabUrl");
+    if (!savedColabUrl) {
+      // Store the file temporarily and show config modal
+      setVideoName(f.name);
+      setShowColabModal(true);
+      // Store file in state to process after URL is saved
+      window._pendingVideoFile = f;
+      return;
+    }
+
+    setVideoName(f.name);
+    setLoading(true);
+    setProgressText("Uploading video...");
+
+    try {
+      // Convert video to base64
+      const buf = await f.arrayBuffer();
+      const base64Video = btoa(
+        new Uint8Array(buf).reduce((data, byte) => data + String.fromCharCode(byte), '')
+      );
+
+      setProgress(10);
+      setProgressText("Processing video with Colab API...");
+
+      // Send to backend for processing
+      const res = await fetch("/api/process-dashcam", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: f.name,
+          videoData: base64Video,
+          mode: processingMode,
+          colabUrl: colabUrl || localStorage.getItem("colabUrl")
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: "Unknown error" }));
+        throw new Error(errorData.error || `Processing failed: ${res.status}`);
+      }
+
+      const data = await res.json();
+      
+      setProgress(100);
+      setProgressText("Complete!");
+      setProcessedVideoUrl(data.redactedPath);
+      
+      console.log(`✅ Dashcam video processed: ${data.filename}`);
+      console.log(`📊 Stats:`, data.stats);
+
+    } catch (err) {
+      console.error(err);
+      setError(err?.message || "Failed to process video.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSaveColabUrl = async () => {
+    if (!colabUrl.trim()) {
+      setError("Please enter your Colab API URL");
+      return;
+    }
+
+    // Validate URL format
+    try {
+      new URL(colabUrl);
+      localStorage.setItem("colabUrl", colabUrl);
+      setShowColabModal(false);
+      setError("");
+      
+      // If there's a pending video file, process it now
+      if (window._pendingVideoFile) {
+        const f = window._pendingVideoFile;
+        window._pendingVideoFile = null;
+        
+        setLoading(true);
+        setProgressText("Uploading video...");
+
+        try {
+          // Convert video to base64
+          const buf = await f.arrayBuffer();
+          const base64Video = btoa(
+            new Uint8Array(buf).reduce((data, byte) => data + String.fromCharCode(byte), '')
+          );
+
+          setProgress(10);
+          setProgressText("Processing video with Colab API...");
+
+          // Send to backend for processing
+          const res = await fetch("/api/process-dashcam", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              filename: f.name,
+              videoData: base64Video,
+              mode: processingMode,
+              colabUrl: colabUrl
+            }),
+          });
+
+          if (!res.ok) {
+            const errorData = await res.json().catch(() => ({ error: "Unknown error" }));
+            throw new Error(errorData.error || `Processing failed: ${res.status}`);
+          }
+
+          const data = await res.json();
+          
+          setProgress(100);
+          setProgressText("Complete!");
+          setProcessedVideoUrl(data.redactedPath);
+          
+          console.log(`✅ Dashcam video processed: ${data.filename}`);
+          console.log(`📊 Stats:`, data.stats);
+
+        } catch (err) {
+          console.error(err);
+          setError(err?.message || "Failed to process video.");
+        } finally {
+          setLoading(false);
+        }
+      }
+    } catch (e) {
+      setError("Please enter a valid URL (e.g., https://xyz.trycloudflare.com)");
+    }
+  };
+
+  return (
+    <div className="uploader-container">
+      {/* Button */}
+      <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', marginBottom: '2rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        <PrimaryButton onClick={handleVideoClick} disabled={loading}>
+          {loading ? <Loader2 className="animate-spin" size={18} /> : <Video size={18} />}
+          Veil Dashcam. Protect License Plates.
+        </PrimaryButton>
+        
+        {localStorage.getItem("colabUrl") && (
+          <button
+            onClick={() => {
+              setColabUrl(localStorage.getItem("colabUrl") || "");
+              setShowColabModal(true);
+            }}
+            style={{
+              padding: '0.5rem 1rem',
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.2)',
+              borderRadius: '8px',
+              color: '#9ca3af',
+              fontSize: '0.9em',
+              cursor: 'pointer',
+              transition: 'all 0.3s'
+            }}
+            onMouseOver={(e) => {
+              e.currentTarget.style.borderColor = 'rgba(59, 130, 246, 0.5)';
+              e.currentTarget.style.color = '#3b82f6';
+            }}
+            onMouseOut={(e) => {
+              e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)';
+              e.currentTarget.style.color = '#9ca3af';
+            }}
+          >
+            ⚙️ Change Colab URL
+          </button>
+        )}
+      </div>
+
+      <input
+        ref={videoInputRef}
+        type="file"
+        accept="video/*"
+        onChange={onVideoChange}
+        className="hidden-input"
+      />
+
+      {/* Progress Bar */}
+      {loading && (
+        <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.9em', color: '#9ca3af' }}>{progressText}</span>
+            <span style={{ fontSize: '0.9em', color: '#9ca3af' }}>{progress}%</span>
+          </div>
+          <div style={{ 
+            width: '100%', 
+            height: '8px', 
+            background: 'rgba(255,255,255,0.1)', 
+            borderRadius: '4px',
+            overflow: 'hidden'
+          }}>
+            <div style={{ 
+              width: `${progress}%`, 
+              height: '100%', 
+              background: 'linear-gradient(90deg, #3b82f6, #8b5cf6)',
+              transition: 'width 0.3s ease',
+              borderRadius: '4px'
+            }} />
+          </div>
+        </div>
+      )}
+
+      {error && <div className="error-message">{error}</div>}
+
+      {/* Processed Video Result */}
+      {processedVideoUrl && (
+        <div style={{ marginTop: '2rem', textAlign: 'center' }}>
+          <h3 style={{ color: '#10b981', marginBottom: '1rem', fontSize: '1.2em' }}>
+            ✅ Dashcam Video Protected
+          </h3>
+          <div className="download-links" style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <button
+              onClick={() => setShowVideoPlayer(!showVideoPlayer)}
+              className="download-link"
+              style={{ 
+                background: 'linear-gradient(135deg, #3b82f6 0%, #2563eb 100%)',
+                fontSize: '1.1em',
+                fontWeight: '600',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                border: 'none',
+                cursor: 'pointer'
+              }}
+            >
+              <Play size={18} /> {showVideoPlayer ? 'Hide' : 'View'} Video 👁️
+            </button>
+            <a
+              href={processedVideoUrl}
+              download
+              className="download-link"
+              style={{ 
+                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                fontSize: '1.1em',
+                fontWeight: '600',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.5rem'
+              }}
+            >
+              <Video size={18} /> Download Video 🔒
+            </a>
+          </div>
+
+          {/* Video Player */}
+          {showVideoPlayer && (
+            <div style={{ 
+              marginTop: '2rem',
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid rgba(59, 130, 246, 0.3)',
+              borderRadius: '12px',
+              overflow: 'hidden',
+              padding: '1rem'
+            }}>
+              <video 
+                controls 
+                style={{ 
+                  width: '100%', 
+                  maxWidth: '800px',
+                  borderRadius: '8px'
+                }}
+                src={processedVideoUrl}
+              >
+                Your browser does not support the video tag.
+              </video>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Colab URL Configuration Modal */}
+      {showColabModal && (
+        <div className="modal-overlay" onClick={() => setShowColabModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>🤖 Configure Colab API</h2>
+              <button 
+                className="modal-close" 
+                onClick={() => setShowColabModal(false)}
+                aria-label="Close modal"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              <p className="modal-description">
+                Enter your Google Colab API URL. This is only needed once - it will be saved for future videos.
+                Get the URL from your running Colab notebook with the YOLOv8 license plate detector.
+              </p>
+
+              <div className="keyword-input-section" style={{ marginTop: '1.5rem' }}>
+                <label className="input-label">Colab API URL</label>
+                <input
+                  type="text"
+                  className="url-input"
+                  placeholder="https://xyz.trycloudflare.com or http://localhost:8000"
+                  value={colabUrl}
+                  onChange={(e) => setColabUrl(e.target.value)}
+                  onKeyPress={(e) => e.key === 'Enter' && handleSaveColabUrl()}
+                />
+              </div>
+
+              <div className="keyword-input-section" style={{ marginTop: '1rem' }}>
+                <label className="input-label">Processing Mode</label>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    onClick={() => setProcessingMode("blur")}
+                    className={processingMode === "blur" ? "mode-toggle-btn active" : "mode-toggle-btn"}
+                    style={{ flex: 1 }}
+                  >
+                    🌫️ Blur
+                  </button>
+                  <button
+                    onClick={() => setProcessingMode("blackout")}
+                    className={processingMode === "blackout" ? "mode-toggle-btn active" : "mode-toggle-btn"}
+                    style={{ flex: 1 }}
+                  >
+                    ⬛ Blackout
+                  </button>
+                </div>
+              </div>
+
+              <div className="info-box" style={{ marginTop: '1.5rem' }}>
+                <strong>How to get your Colab URL:</strong>
+                <ol>
+                  <li>Run your Google Colab notebook with the YOLOv8 FastAPI server</li>
+                  <li>Wait for "Application startup complete" message</li>
+                  <li>Get the public URL from <code>output.eval_js("google.colab.kernel.proxyPort(8000)")</code></li>
+                  <li>Or use <code>http://localhost:8000</code> if running locally</li>
+                </ol>
+              </div>
+
+              <div className="modal-actions">
+                <SecondaryButton onClick={() => setShowColabModal(false)}>
+                  Cancel
+                </SecondaryButton>
+                <PrimaryButton onClick={handleSaveColabUrl}>
+                  <Video size={18} />
+                  Save & Continue
+                </PrimaryButton>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 export default function App() {
+  const [activeTab, setActiveTab] = useState("documents"); // "documents" or "dashcam"
+
   return (
     <div className="app-container">
       <h1 className="app-title">
@@ -726,9 +1303,58 @@ export default function App() {
         <span className="letter letter-4">L</span>
       </h1>
 
+      {/* Tab Navigation */}
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'center', 
+        gap: '1rem', 
+        marginBottom: '2rem',
+        borderBottom: '1px solid rgba(255,255,255,0.1)',
+        paddingBottom: '1rem'
+      }}>
+        <button
+          onClick={() => setActiveTab("documents")}
+          style={{
+            padding: '0.75rem 2rem',
+            background: activeTab === "documents" ? 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)' : 'transparent',
+            border: activeTab === "documents" ? 'none' : '1px solid rgba(255,255,255,0.2)',
+            borderRadius: '8px',
+            color: 'white',
+            fontSize: '1em',
+            fontWeight: '600',
+            cursor: 'pointer',
+            transition: 'all 0.3s',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}
+        >
+          <FileText size={18} /> Documents
+        </button>
+        <button
+          onClick={() => setActiveTab("dashcam")}
+          style={{
+            padding: '0.75rem 2rem',
+            background: activeTab === "dashcam" ? 'linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%)' : 'transparent',
+            border: activeTab === "dashcam" ? 'none' : '1px solid rgba(255,255,255,0.2)',
+            borderRadius: '8px',
+            color: 'white',
+            fontSize: '1em',
+            fontWeight: '600',
+            cursor: 'pointer',
+            transition: 'all 0.3s',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '0.5rem'
+          }}
+        >
+          <Video size={18} /> Dashcam
+        </button>
+      </div>
+
       <section className="main-section">
         <div className="main-section-content">
-          <DocumentUploader />
+          {activeTab === "documents" ? <DocumentUploader /> : <DashcamProcessor />}
         </div>
       </section>
     </div>

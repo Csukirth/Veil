@@ -916,6 +916,103 @@ app.post("/api/search-and-scrape", async (req, res) => {
   }
 });
 
+// Dashcam Video Processing endpoint
+app.post("/api/process-dashcam", async (req, res) => {
+  try {
+    const { filename, videoData, mode = "blur", colabUrl } = req.body || {};
+    
+    if (!videoData) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing video data"
+      });
+    }
+    
+    if (!colabUrl) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing Colab API URL. Please provide your Colab notebook URL."
+      });
+    }
+    
+    console.log(`\n🎥 Processing dashcam video: ${filename}`);
+    console.log(`🔒 Mode: ${mode}`);
+    console.log(`🌐 Colab API: ${colabUrl}`);
+    
+    // Save uploaded video
+    const videoFilename = (filename || "dashcam.mp4").replace(/[^\w.\-]/g, "_");
+    const inputPath = path.join(SAVE_DIR, videoFilename);
+    const outputFilename = videoFilename.replace(/\.(mp4|mov|avi)$/i, "_REDACTED.mp4");
+    const outputPath = path.join(SAVE_DIR, outputFilename);
+    
+    // Convert base64 to buffer and save
+    const videoBuffer = Buffer.from(videoData, "base64");
+    await fs.writeFile(inputPath, videoBuffer);
+    console.log(`💾 Saved video: ${videoFilename} (${videoBuffer.length} bytes)`);
+    
+    // Check if Colab API is accessible
+    try {
+      const healthCheck = await fetch(`${colabUrl}/health`, { timeout: 5000 });
+      if (!healthCheck.ok) {
+        throw new Error("Health check failed");
+      }
+    } catch (error) {
+      return res.status(400).json({
+        ok: false,
+        error: `Cannot connect to Colab API at ${colabUrl}. Make sure your Colab notebook is running. Error: ${error.message}`
+      });
+    }
+    
+    // Check if FFmpeg is installed
+    try {
+      const { execSync } = await import("child_process");
+      execSync("ffmpeg -version", { stdio: "ignore" });
+    } catch (err) {
+      return res.status(500).json({
+        ok: false,
+        error: "FFmpeg is not installed. Please install it with: brew install ffmpeg"
+      });
+    }
+
+    // Process video using the dashcam processor
+    const { processDashcamVideo } = await import("./process-dashcam-video.js");
+    
+    const result = await processDashcamVideo(
+      inputPath,
+      outputPath,
+      mode,
+      colabUrl,
+      (progress, message) => {
+        console.log(`   [${progress.toFixed(0)}%] ${message}`);
+      }
+    );
+    
+    // Clean up original video (keep only redacted version)
+    try {
+      await fs.unlink(inputPath);
+      console.log(`🧹 Deleted original video: ${videoFilename}`);
+    } catch (err) {
+      console.warn(`⚠️  Could not delete original video: ${err.message}`);
+    }
+    
+    console.log(`✅ Dashcam processing complete!`);
+    
+    return res.json({
+      ok: true,
+      filename: outputFilename,
+      redactedPath: `/saved/${outputFilename}`,
+      stats: result.stats
+    });
+    
+  } catch (error) {
+    console.error("❌ Dashcam processing error:", error.message);
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || "Failed to process dashcam video"
+    });
+  }
+});
+
 app.listen(3001, () => {
   console.log("Saver API on http://127.0.0.1:3001");
 });
