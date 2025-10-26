@@ -12,38 +12,26 @@ const SAVED_DIR = path.join(__dirname, "saved");
 
 async function findRedactedBboxes() {
   try {
-    console.log("\n🔍 Finding Bounding Boxes for Redacted Words\n");
-    console.log("=".repeat(80));
-
-    // Read files
+    // Read files - always use the generic filenames that server.js writes
     const originalText = await fs.readFile(path.join(SAVED_DIR, "extracted.txt"), "utf8");
     const maskedText = await fs.readFile(path.join(SAVED_DIR, "extracted_masked.txt"), "utf8");
     
-    // Load bounding boxes
-    const bboxFiles = await fs.readdir(SAVED_DIR);
-    const bboxFile = bboxFiles.find(f => f.endsWith("_bboxes.json"));
-    
-    if (!bboxFile) {
-      console.error("⚠️  No bounding boxes file found");
-      return;
-    }
-    
+    // Load bounding boxes from the generic file
     const bboxData = JSON.parse(
-      await fs.readFile(path.join(SAVED_DIR, bboxFile), "utf8")
+      await fs.readFile(path.join(SAVED_DIR, "extracted_bboxes.json"), "utf8")
     );
-    
-    console.log(`📦 Loaded ${bboxData.boundingBoxes.length} bounding boxes\n`);
     
     // Find all redaction tags
     const tagPattern = /<([^>]+)>/g;
     const tags = [...maskedText.matchAll(tagPattern)];
     
-    console.log(`Found ${tags.length} redaction tag(s)\n`);
-    console.log("=".repeat(80));
-    console.log("\n📊 REDACTED WORDS:\n");
+    console.log(`🔍 Finding bounding boxes for ${tags.length} detection(s)...`);
     
     const results = [];
-    const usedBboxKeys = new Set(); // Track which bboxes have been assigned to a tag
+    const usedBboxKeys = new Map(); // Track which bboxes have been assigned to which tag types
+    
+    // Helper to create unique key for a bbox with tag type
+    const getBboxKey = (bbox, tagType = '') => `${bbox.page}_${bbox.bbox.x}_${bbox.bbox.y}_${tagType}`;
     
     // For each tag, use regex to find what it replaced
     for (const tagMatch of tags) {
@@ -88,31 +76,28 @@ async function findRedactedBboxes() {
         continue;
       }
       
-      // Find the FIRST unused bounding box that matches this type
+      // Find ALL unused bounding boxes that match this tag/type
       const matchingBboxes = [];
-      
-      // Helper to create unique key for a bbox
-      const getBboxKey = (bbox) => `${bbox.page}_${bbox.bbox.x}_${bbox.bbox.y}_${bbox.text}`;
       
       // First, try to find the bbox with the redacted tag itself
       for (const bbox of bboxData.boundingBoxes) {
-        const key = getBboxKey(bbox);
+        const key = getBboxKey(bbox, tagType);
         if (!usedBboxKeys.has(key) && (bbox.text === tag || bbox.text.includes(tag))) {
           matchingBboxes.push(bbox);
-          usedBboxKeys.add(key);
-          break; // Only take one bbox per tag
+          usedBboxKeys.set(key, true);
+          // Don't break - find all matches
         }
       }
       
-      // If that didn't work and we have a typePattern, find first unused match
+      // If that didn't work and we have a typePattern, find ALL unused matches
       if (matchingBboxes.length === 0 && typePattern) {
         for (const bbox of bboxData.boundingBoxes) {
-          const key = getBboxKey(bbox);
+          const key = getBboxKey(bbox, tagType);
           typePattern.lastIndex = 0; // Reset regex
           if (!usedBboxKeys.has(key) && typePattern.test(bbox.text)) {
             matchingBboxes.push(bbox);
-            usedBboxKeys.add(key);
-            break; // Only take one bbox per tag
+            usedBboxKeys.set(key, true);
+            // Don't break - find all matches for this type
           }
         }
       }
@@ -120,12 +105,12 @@ async function findRedactedBboxes() {
       // If still no match and we have a specific searchPattern, try exact matching
       if (matchingBboxes.length === 0 && searchPattern) {
         for (const bbox of bboxData.boundingBoxes) {
-          const key = getBboxKey(bbox);
+          const key = getBboxKey(bbox, tagType);
           const regex = new RegExp(`\\b${searchPattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
           if (!usedBboxKeys.has(key) && regex.test(bbox.text)) {
             matchingBboxes.push(bbox);
-            usedBboxKeys.add(key);
-            break; // Only take one bbox per tag
+            usedBboxKeys.set(key, true);
+            // Don't break - find all matches
           }
         }
       }
@@ -190,22 +175,10 @@ async function findRedactedBboxes() {
         return bbox;
       });
       
-      // Display results
-      console.log(`${results.length + 1}. ${tag}`);
-      console.log(`   Type: ${tagType}`);
-      console.log(`   Original: "${originalValue}"`);
-      console.log(`   Bounding Boxes: ${refinedBboxes.length}`);
-      
+      // Display results summary
       if (refinedBboxes.length > 0) {
-        refinedBboxes.forEach((bbox, idx) => {
-          console.log(`      ${idx + 1}. Page ${bbox.page}: "${bbox.text}"`);
-          console.log(`         Position: (x: ${bbox.bbox.x}, y: ${bbox.bbox.y})`);
-          console.log(`         Size: ${bbox.bbox.width}×${bbox.bbox.height}px`);
-        });
-      } else {
-        console.log(`      ⚠️  No bounding boxes found`);
+        console.log(`   ✓ ${tagType}: ${refinedBboxes.length} instance(s) found`);
       }
-      console.log();
       
       results.push({
         tag,
@@ -215,13 +188,64 @@ async function findRedactedBboxes() {
       });
     }
     
+    // FALLBACK: Scan entire document for common patterns that SIM API might have missed
+    console.log("\n🔍 Running fallback scan...");
+    
+    const fallbackPatterns = [
+      { type: 'PHONE_FALLBACK', matchedType: 'PHONE_NUMBER', pattern: /(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}|(?:\d{3}[-.\s]\d{3}[-.\s]\d{4})/g, desc: 'Phone numbers' },
+      { type: 'EMAIL_FALLBACK', matchedType: 'EMAIL_ADDRESS', pattern: /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi, desc: 'Email addresses' },
+      { type: 'SSN_FALLBACK', matchedType: 'SSN', pattern: /\b\d{3}[-]?\d{2}[-]?\d{4}\b/g, desc: 'SSN patterns' }
+    ];
+    
+    // Mark all already-redacted bboxes as used for their specific types
+    for (const result of results) {
+      for (const bbox of result.boundingBoxes) {
+        usedBboxKeys.set(getBboxKey(bbox, result.type), true);
+      }
+    }
+    
+    let fallbackCount = 0;
+    for (const { type, matchedType, pattern, desc } of fallbackPatterns) {
+      const foundBboxes = [];
+      
+      for (const bbox of bboxData.boundingBoxes) {
+        const key = getBboxKey(bbox, type);
+        const matchedKey = getBboxKey(bbox, matchedType);
+        pattern.lastIndex = 0; // Reset regex
+        
+        // Skip if already matched by SIM API or by fallback
+        if (!usedBboxKeys.has(key) && !usedBboxKeys.has(matchedKey) && pattern.test(bbox.text)) {
+          foundBboxes.push(bbox);
+          usedBboxKeys.set(key, true);
+          fallbackCount++;
+        }
+      }
+      
+      if (foundBboxes.length > 0) {
+        console.log(`   ⚠️  Found ${foundBboxes.length} missed ${desc}`);
+        fallbackCount++;
+        
+        // Add to results
+        results.push({
+          tag: `<${type}>`,
+          type: type,
+          originalValue: desc,
+          boundingBoxes: foundBboxes
+        });
+      }
+    }
+    
+    if (fallbackCount === 0) {
+      console.log(`   ✓ No missed items`);
+    }
+    
     // Save to JSON
     const jsonOutput = path.join(SAVED_DIR, "redacted_bboxes.json");
     await fs.writeFile(jsonOutput, JSON.stringify(results, null, 2), "utf8");
     
-    console.log("=".repeat(80));
-    console.log(`\n✅ Successfully processed ${results.length} redaction(s)`);
-    console.log(`📦 JSON saved to: redacted_bboxes.json\n`);
+    // Count total bboxes to redact
+    const totalBboxes = results.reduce((sum, r) => sum + r.boundingBoxes.length, 0);
+    console.log(`\n✅ Found ${totalBboxes} item(s) to redact across ${results.length} type(s)`);
     
   } catch (error) {
     console.error("\n❌ Error:", error.message);

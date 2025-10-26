@@ -6,10 +6,9 @@ import "./App.css";
 import {
   Upload,
   FileText,
-  Play,
-  Square,
   Link as LinkIcon,
   Loader2,
+  X,
 } from "lucide-react";
 
 // --- PDF.js setup (client-side extraction) ---
@@ -17,14 +16,6 @@ import * as pdfjsLib from "pdfjs-dist";
 import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?worker&url";
 pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 const { getDocument } = pdfjsLib;
-
-function Pill({ children }) {
-  return (
-    <span className="pill">
-      {children}
-    </span>
-  );
-}
 
 function PrimaryButton({ children, onClick, disabled }) {
   return (
@@ -53,17 +44,27 @@ function SecondaryButton({ children, onClick, disabled }) {
 function DocumentUploader() {
   const docInputRef = useRef(null);
   const [docName, setDocName] = useState("");
-  const [downHref, setDownHref] = useState("");
   const [redactedHref, setRedactedHref] = useState("");
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(0);
+  const [progressText, setProgressText] = useState("");
   const [error, setError] = useState("");
+  const [showUrlModal, setShowUrlModal] = useState(false);
+  const [urlInput, setUrlInput] = useState("");
+  const [urlsToScrape, setUrlsToScrape] = useState([]);
+  const [searchMode, setSearchMode] = useState("url"); // "url" or "keyword"
+  const [keywordQuery, setKeywordQuery] = useState("");
+  const [maxResults, setMaxResults] = useState(5);
+  const [searchResults, setSearchResults] = useState([]);
 
   const handleDocClick = () => docInputRef.current?.click();
 
   const onDocChange = async (e) => {
     setError("");
-    setDownHref("");
     setRedactedHref("");
+    setSearchResults([]);
+    setProgress(0);
+    setProgressText("");
     const f = e.target.files?.[0];
     if (!f) return;
 
@@ -76,6 +77,7 @@ function DocumentUploader() {
 
     setDocName(f.name);
     setLoading(true);
+    setProgressText("Extracting text from PDF...");
 
     try {
       const buf = await f.arrayBuffer();
@@ -199,7 +201,8 @@ function DocumentUploader() {
       }
 
       const data = await res.json();
-      setDownHref(data.path);
+      setProgress(33);
+      setProgressText("Detecting sensitive information...");
       
       // Also save as "extracted.txt" for blur scripts
       await fetch("/api/save-text", {
@@ -260,6 +263,8 @@ function DocumentUploader() {
         
         // Automatically trigger PDF blurring
         console.log("🔒 Starting automatic PDF blurring...");
+        setProgress(66);
+        setProgressText("Creating redacted PDF...");
         try {
           const blurRes = await fetch("/api/blur-pdf", {
             method: "POST",
@@ -267,6 +272,8 @@ function DocumentUploader() {
           });
           
           if (blurRes.ok) {
+            setProgress(100);
+            setProgressText("Complete!");
             const blurData = await blurRes.json();
             setRedactedHref(blurData.redactedPath);
             console.log(`✅ Redacted PDF created: ${blurData.filename}`);
@@ -287,12 +294,164 @@ function DocumentUploader() {
     }
   };
 
+  const handleScraperClick = () => {
+    setShowUrlModal(true);
+    setUrlInput("");
+    setUrlsToScrape([]);
+    setSearchMode("url");
+    setKeywordQuery("");
+    setRedactedHref("");
+    setSearchResults([]);
+    setError("");
+    setMaxResults(5);
+    setError("");
+  };
+
+  const handleAddUrl = () => {
+    const trimmedUrl = urlInput.trim();
+    if (!trimmedUrl) {
+      setError("Please enter a URL");
+      return;
+    }
+
+    // Basic URL validation
+    try {
+      new URL(trimmedUrl);
+      setUrlsToScrape([...urlsToScrape, trimmedUrl]);
+      setUrlInput("");
+      setError("");
+    } catch (e) {
+      setError("Please enter a valid URL (e.g., https://example.com/document.pdf)");
+    }
+  };
+
+  const handleRemoveUrl = (index) => {
+    setUrlsToScrape(urlsToScrape.filter((_, i) => i !== index));
+  };
+
+  const handleScrapePdfs = async () => {
+    if (urlsToScrape.length === 0) {
+      setError("Please add at least one URL");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setShowUrlModal(false);
+
+    try {
+      console.log(`🌐 Scraping ${urlsToScrape.length} PDF(s) using BrightData...`);
+
+      for (let i = 0; i < urlsToScrape.length; i++) {
+        const url = urlsToScrape[i];
+        console.log(`\n📥 [${i + 1}/${urlsToScrape.length}] Fetching: ${url}`);
+
+        // Call backend to fetch PDF using BrightData
+        const response = await fetch("/api/scrape-pdf", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Failed to scrape ${url}: ${errorText}`);
+        }
+
+        const result = await response.json();
+        console.log(`✅ Successfully processed: ${result.filename}`);
+
+        // Update UI with the last processed file's results
+        if (i === urlsToScrape.length - 1) {
+          setDocName(result.filename);
+          if (result.textPath) setDownHref(result.textPath);
+          if (result.redactedPath) setRedactedHref(result.redactedPath);
+        }
+      }
+
+      console.log("\n🎉 All PDFs processed successfully!");
+
+    } catch (err) {
+      console.error("❌ Scraping error:", err);
+      setError(err?.message || "Failed to scrape PDFs");
+    } finally {
+      setLoading(false);
+      setUrlsToScrape([]);
+    }
+  };
+
+  const handleAgenticSearch = async () => {
+    if (!keywordQuery.trim()) {
+      setError("Please enter a search query");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    setShowUrlModal(false);
+    setProgress(10);
+    setProgressText("Searching for PDFs...");
+    setSearchResults([]);
+
+    try {
+      setProgress(30);
+      setProgressText("Fetching and processing PDFs...");
+      console.log(`🔍 Agentic Search: "${keywordQuery}"`);
+      console.log(`📊 Looking for up to ${maxResults} PDFs...`);
+
+      // Call backend agentic search endpoint
+      const response = await fetch("/api/search-and-scrape", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          query: keywordQuery,
+          maxResults: maxResults
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Agentic search failed: ${errorText}`);
+      }
+
+      const result = await response.json();
+      setProgress(100);
+      setProgressText("Complete!");
+      console.log(`✅ Search complete!`);
+      console.log(`📊 Results: ${result.stats.processed}/${result.stats.searched} processed`);
+
+      // Store all results that have redacted PDFs
+      if (result.results && result.results.length > 0) {
+        const successfulResults = result.results.filter(r => r.redactedPath && !r.error);
+        setSearchResults(successfulResults);
+        setDocName(`Found ${successfulResults.length} protected document(s)`);
+      }
+
+      console.log("\n🎉 Agentic search & scrape complete!");
+
+    } catch (err) {
+      console.error("❌ Agentic search error:", err);
+      setError(err?.message || "Failed to perform agentic search");
+    } finally {
+      setLoading(false);
+      setKeywordQuery("");
+    }
+  };
+
   return (
     <div className="uploader-container">
-      <PrimaryButton onClick={handleDocClick} disabled={loading}>
-        {loading ? <Loader2 className="animate-spin" size={18} /> : <FileText size={18} />}
-        Upload & Extract Text
-      </PrimaryButton>
+      {/* Centered Button Container */}
+      <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '2rem' }}>
+        <PrimaryButton onClick={handleDocClick} disabled={loading}>
+          {loading ? <Loader2 className="animate-spin" size={18} /> : <FileText size={18} />}
+          Veil Documents. Reveal What Matters.
+        </PrimaryButton>
+
+        <PrimaryButton onClick={handleScraperClick} disabled={loading}>
+          <LinkIcon size={18} />
+          Veil Search. Protect the Web.
+        </PrimaryButton>
+      </div>
 
       <input
         ref={docInputRef}
@@ -302,169 +461,260 @@ function DocumentUploader() {
         className="hidden-input"
       />
 
-      {docName && !loading && !downHref && (
-        <div className="doc-info">
-          <Upload size={14} /> Processing: <span className="doc-name">{docName}</span>
+      {/* Progress Bar */}
+      {loading && (
+        <div style={{ marginTop: '1rem', marginBottom: '1rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+            <span style={{ fontSize: '0.9em', color: '#9ca3af' }}>{progressText}</span>
+            <span style={{ fontSize: '0.9em', color: '#9ca3af' }}>{progress}%</span>
+          </div>
+          <div style={{ 
+            width: '100%', 
+            height: '8px', 
+            background: 'rgba(255,255,255,0.1)', 
+            borderRadius: '4px',
+            overflow: 'hidden'
+          }}>
+            <div style={{ 
+              width: `${progress}%`, 
+              height: '100%', 
+              background: 'linear-gradient(90deg, #3b82f6, #8b5cf6)',
+              transition: 'width 0.3s ease',
+              borderRadius: '4px'
+            }} />
+          </div>
         </div>
       )}
+
       {error && <div className="error-message">{error}</div>}
 
-      {downHref && (
-        <div className="download-links">
-          <a
-            href={downHref}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="download-link"
-          >
-            <LinkIcon size={14} /> Open saved text
-          </a>
+      {/* Single Document Result */}
+      {redactedHref && searchResults.length === 0 && (
+        <div style={{ marginTop: '2rem', textAlign: 'center' }}>
+          <h3 style={{ color: '#10b981', marginBottom: '1rem', fontSize: '1.2em' }}>
+            ✅ Document Protected
+          </h3>
+          <div className="download-links">
+            <a
+              href={redactedHref}
+              download
+              className="download-link"
+              style={{ 
+                background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                fontSize: '1.1em',
+                fontWeight: '600',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.5rem'
+              }}
+            >
+              <FileText size={18} /> Download Redacted PDF 🔒
+            </a>
+          </div>
         </div>
       )}
 
-      {redactedHref && (
-        <div className="download-links" style={{ marginTop: '1rem' }}>
-          <a
-            href={redactedHref}
-            download
-            className="download-link"
-            style={{ 
-              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
-              fontSize: '1.1em',
-              fontWeight: '600'
-            }}
-          >
-            <FileText size={16} /> Download Redacted PDF 🔒
-          </a>
+      {/* Search Results */}
+      {searchResults.length > 0 && (
+        <div style={{ marginTop: '2rem' }}>
+          <h3 style={{ color: '#10b981', marginBottom: '1rem', fontSize: '1.2em', textAlign: 'center' }}>
+            ✅ {searchResults.length} Document(s) Protected
+          </h3>
+          <div style={{ 
+            display: 'grid', 
+            gap: '1rem', 
+            gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+            marginTop: '1rem'
+          }}>
+            {searchResults.map((result, idx) => (
+              <div key={idx} style={{
+                background: 'rgba(255,255,255,0.05)',
+                border: '1px solid rgba(16, 185, 129, 0.3)',
+                borderRadius: '8px',
+                padding: '1rem',
+                transition: 'all 0.2s'
+              }}>
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <div style={{ fontSize: '0.9em', color: '#9ca3af', marginBottom: '0.25rem' }}>
+                    {result.domain || 'Unknown Source'}
+                  </div>
+                  <div style={{ fontSize: '1em', color: '#fff', fontWeight: '500' }}>
+                    {result.title || result.filename}
+                  </div>
+                </div>
+                <a
+                  href={result.redactedPath}
+                  download
+                  className="download-link"
+                  style={{ 
+                    background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+                    fontSize: '0.9em',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    width: '100%',
+                    justifyContent: 'center'
+                  }}
+                >
+                  <FileText size={14} /> Download 🔒
+                </a>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* URL Scraping Modal */}
+      {showUrlModal && (
+        <div className="modal-overlay" onClick={() => setShowUrlModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h2>Scrape PDFs with BrightData</h2>
+              <button 
+                className="modal-close" 
+                onClick={() => setShowUrlModal(false)}
+                aria-label="Close modal"
+              >
+                <X size={24} />
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {/* Mode Toggle */}
+              <div className="mode-toggle">
+                <button
+                  className={`mode-toggle-btn ${searchMode === 'url' ? 'active' : ''}`}
+                  onClick={() => setSearchMode('url')}
+                >
+                  Enter URLs
+                </button>
+                <button
+                  className={`mode-toggle-btn ${searchMode === 'keyword' ? 'active' : ''}`}
+                  onClick={() => setSearchMode('keyword')}
+                >
+                  🤖 Agentic Search
+                </button>
+              </div>
+
+              {/* URL Mode */}
+              {searchMode === 'url' && (
+                <>
+                  <p className="modal-description">
+                    Enter PDF URLs to scrape using BrightData. The system will fetch each PDF, 
+                    extract text, detect sensitive information, and create redacted versions.
+                  </p>
+
+                  <div className="url-input-group">
+                    <input
+                      type="text"
+                      className="url-input"
+                      placeholder="https://example.com/document.pdf"
+                      value={urlInput}
+                      onChange={(e) => setUrlInput(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleAddUrl()}
+                    />
+                    <SecondaryButton onClick={handleAddUrl}>
+                      Add URL
+                    </SecondaryButton>
+                  </div>
+
+                  {urlsToScrape.length > 0 && (
+                    <div className="url-list">
+                      <h3>URLs to Scrape ({urlsToScrape.length})</h3>
+                      {urlsToScrape.map((url, index) => (
+                        <div key={index} className="url-item">
+                          <span className="url-text">{url}</span>
+                          <button
+                            className="url-remove"
+                            onClick={() => handleRemoveUrl(index)}
+                            aria-label="Remove URL"
+                          >
+                            <X size={16} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="modal-actions">
+                    <SecondaryButton onClick={() => setShowUrlModal(false)}>
+                      Cancel
+                    </SecondaryButton>
+                    <PrimaryButton 
+                      onClick={handleScrapePdfs}
+                      disabled={urlsToScrape.length === 0}
+                    >
+                      <LinkIcon size={18} />
+                      Scrape {urlsToScrape.length > 0 ? `${urlsToScrape.length} PDF(s)` : 'PDFs'}
+                    </PrimaryButton>
+                  </div>
+                </>
+              )}
+
+              {/* Keyword Search Mode */}
+              {searchMode === 'keyword' && (
+                <>
+                  <p className="modal-description">
+                    🤖 <strong>AI-Powered Search:</strong> Enter keywords and let BrightData's agent automatically 
+                    find, scrape, and redact relevant PDFs. Perfect for research, legal discovery, or bulk processing.
+                  </p>
+
+                  <div className="keyword-input-section">
+                    <label className="input-label">Search Query</label>
+                    <input
+                      type="text"
+                      className="url-input"
+                      placeholder="e.g., 'financial reports 2024' or 'medical research papers'"
+                      value={keywordQuery}
+                      onChange={(e) => setKeywordQuery(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && handleAgenticSearch()}
+                    />
+                  </div>
+
+                  <div className="keyword-input-section">
+                    <label className="input-label">Max Results (1-10)</label>
+                    <input
+                      type="number"
+                      className="url-input"
+                      min="1"
+                      max="10"
+                      value={maxResults}
+                      onChange={(e) => setMaxResults(Math.min(10, Math.max(1, parseInt(e.target.value) || 5)))}
+                    />
+                  </div>
+
+                  <div className="info-box">
+                    <strong>How it works:</strong>
+                    <ol>
+                      <li>BrightData searches Google for PDFs matching your keywords</li>
+                      <li>Automatically fetches the top {maxResults} results</li>
+                      <li>Extracts text and detects sensitive information</li>
+                      <li>Creates redacted versions with data blacked out</li>
+                    </ol>
+                  </div>
+
+                  <div className="modal-actions">
+                    <SecondaryButton onClick={() => setShowUrlModal(false)}>
+                      Cancel
+                    </SecondaryButton>
+                    <PrimaryButton 
+                      onClick={handleAgenticSearch}
+                      disabled={!keywordQuery.trim()}
+                    >
+                      <LinkIcon size={18} />
+                      🤖 Search & Redact
+                    </PrimaryButton>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function DashcamLive() {
-  const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const [running, setRunning] = useState(false);
-  const [wsStatus, setWsStatus] = useState("disconnected");
-  const [boxes, setBoxes] = useState([]);
-  const streamRef = useRef(null);
-  const wsRef = useRef(null);
-  const rafRef = useRef(0);
-  const frameIdRef = useRef(0);
-
-  const drawOverlay = () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return;
-    const ctx = canvas.getContext("2d");
-    canvas.width = video.videoWidth || 640;
-    canvas.height = video.videoHeight || 360;
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = "rgba(255, 200, 0, 0.9)";
-    ctx.fillStyle = "rgba(255, 200, 0, 0.15)";
-    boxes.forEach((b) => {
-      ctx.strokeRect(b.x, b.y, b.w, b.h);
-      ctx.fillRect(b.x, b.y, b.w, b.h);
-    });
-  };
-
-  const pumpFrames = async () => {
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    if (!video || !canvas) return;
-    drawOverlay();
-    if (wsRef.current && wsRef.current.readyState === 1) {
-      canvas.toBlob(
-        (blob) => {
-          if (blob) {
-            frameIdRef.current += 1;
-            const packet = { type: "frame", frameId: frameIdRef.current };
-            wsRef.current.send(JSON.stringify(packet));
-            wsRef.current.send(blob);
-          }
-        },
-        "image/jpeg",
-        0.7
-      );
-    }
-    if (running) rafRef.current = window.setTimeout(pumpFrames, 100);
-  };
-
-  const start = async () => {
-    if (running) return;
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-      streamRef.current = stream;
-      if (videoRef.current) videoRef.current.srcObject = stream;
-      const url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/redact";
-      const ws = new WebSocket(url);
-      wsRef.current = ws;
-      ws.onopen = () => setWsStatus("connected");
-      ws.onclose = () => setWsStatus("disconnected");
-      ws.onerror = () => setWsStatus("error");
-      ws.onmessage = (ev) => {
-        try {
-          const msg = JSON.parse(ev.data);
-          if (msg.type === "masks" && Array.isArray(msg.boxes)) setBoxes(msg.boxes);
-        } catch {}
-      };
-      setRunning(true);
-      pumpFrames();
-    } catch (err) {
-      alert("Camera access failed: " + (err.message || err));
-      stop();
-    }
-  };
-
-  const stop = () => {
-    setRunning(false);
-    window.clearTimeout(rafRef.current);
-    if (wsRef.current) {
-      try {
-        wsRef.current.close();
-      } catch {}
-      wsRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    setBoxes([]);
-    setWsStatus("disconnected");
-  };
-
-  return (
-    <div className="dashcam-container">
-      <div className="dashcam-controls">
-        {!running ? (
-          <SecondaryButton onClick={start}>
-            <Play size={16} /> Start live dashcam
-            <span className="beta-badge">
-              BETA
-            </span>
-          </SecondaryButton>
-        ) : (
-          <SecondaryButton onClick={stop}>
-            <Square size={16} /> Stop
-          </SecondaryButton>
-        )}
-        <Pill>WS: {wsStatus}</Pill>
-      </div>
-      <div className="dashcam-preview">
-        <div className="dashcam-grid">
-          <div className="video-container">
-            <video ref={videoRef} autoPlay playsInline muted className="video-element" />
-          </div>
-          <div className="canvas-container">
-            <canvas ref={canvasRef} className="canvas-element" />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default function App() {
   return (
@@ -479,7 +729,6 @@ export default function App() {
       <section className="main-section">
         <div className="main-section-content">
           <DocumentUploader />
-          <DashcamLive />
         </div>
       </section>
     </div>
