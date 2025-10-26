@@ -17,3 +17,27 @@ It also includes a live dashcam preview feature.
    node server.js
    npm run dev
    view @ http://localhost:5173/
+
+
+
+### ⚙️ Backend (AI Dashcam & Model Training)
+Create and activate a Python virtual environment in `/backend`, then install:
+
+fastapi
+uvicorn
+ultralytics
+datasets
+torch
+torchvision
+pillow
+opencv-python
+pycocotools
+hf_xet
+
+
+### 🧠 YOLOv8 Model Training
+Install Ultralytics for YOLOv8:
+```bash
+pip install ultralytics
+
+

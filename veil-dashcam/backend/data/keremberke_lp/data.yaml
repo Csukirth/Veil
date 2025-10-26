@@ -1,0 +1,6 @@
+# C:\Users\super\New folder\Veil\veil-dashcam\backend\data\keremberke_lp\data.yaml
+path: "C:/Users/super/New folder/Veil/veil-dashcam/backend/data/keremberke_lp"
+train: "C:/Users/super/New folder/Veil/veil-dashcam/backend/data/keremberke_lp/train/images"
+val:   "C:/Users/super/New folder/Veil/veil-dashcam/backend/data/keremberke_lp/valid/images"
+names: [license_plate]
+nc: 1
