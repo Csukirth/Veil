@@ -54,6 +54,7 @@ function DocumentUploader() {
   const docInputRef = useRef(null);
   const [docName, setDocName] = useState("");
   const [downHref, setDownHref] = useState("");
+  const [redactedHref, setRedactedHref] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -62,6 +63,7 @@ function DocumentUploader() {
   const onDocChange = async (e) => {
     setError("");
     setDownHref("");
+    setRedactedHref("");
     const f = e.target.files?.[0];
     if (!f) return;
 
@@ -77,20 +79,49 @@ function DocumentUploader() {
 
     try {
       const buf = await f.arrayBuffer();
-      const pdf = await getDocument({ data: buf }).promise;
+      // Clone the buffer before PDF.js consumes it
+      const bufCopy = buf.slice(0);
+      const pdf = await getDocument({ data: bufCopy }).promise;
 
-      // 1) Try native text extraction
+      // 1) Extract text and bounding boxes from all pages
       let pages = [];
+      const allBoundingBoxes = [];
+      
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: 1.0 }); // Use scale 1.0 for accurate coordinates
         const content = await page.getTextContent();
         const txt = content.items.map(it => ("str" in it ? it.str : "")).join(" ").trim();
         pages.push(txt);
+        
+        // Extract bounding boxes for all text items in PDF coordinate space
+        content.items.forEach((item) => {
+          if (!item.str || item.str.trim() === "") return;
+          
+          const tx = item.transform;
+          // tx[4] = x position, tx[5] = y position (bottom-left origin)
+          // tx[0] = horizontal scale, tx[3] = vertical scale (font size)
+          const x = tx[4];
+          const y = tx[5];
+          const width = item.width;
+          const height = item.height;
+          
+          allBoundingBoxes.push({
+            page: i,
+            text: item.str,
+            bbox: {
+              x: Math.round(x),
+              y: Math.round(y),
+              width: Math.round(width),
+              height: Math.round(height)
+            }
+          });
+        });
       }
 
       let finalText = pages.join("\n\n").trim();
 
-      // 2) If empty/near-empty, OCR each page image instead (PDF-only OCR)
+      // 2) If empty/near-empty, OCR each page image instead
       const needsOCR = finalText.replace(/\s+/g, "").length < 5;
       if (needsOCR) {
         const ocrTexts = [];
@@ -116,6 +147,7 @@ function DocumentUploader() {
 
       const suggested = (docName?.replace(/\.[^.]+$/, "") || "extracted") + ".txt";
 
+      // Save extracted text
       const res = await fetch("/api/save-text", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -129,6 +161,65 @@ function DocumentUploader() {
 
       const data = await res.json();
       setDownHref(data.path);
+      
+      // Save the original PDF file
+      const base64Pdf = btoa(
+        new Uint8Array(buf).reduce((data, byte) => data + String.fromCharCode(byte), '')
+      );
+      
+      await fetch("/api/save-pdf", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          filename: f.name,
+          pdfData: base64Pdf
+        }),
+      });
+      console.log(`Saved original PDF: ${f.name}`);
+      
+      // Save bounding boxes for all text items
+      if (allBoundingBoxes.length > 0) {
+        const bboxFilename = (docName?.replace(/\.[^.]+$/, "") || "extracted") + "_bboxes.json";
+        await fetch("/api/save-text", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: bboxFilename,
+            text: JSON.stringify({
+              filename: f.name,
+              totalPages: pdf.numPages,
+              boundingBoxes: allBoundingBoxes,
+              timestamp: new Date().toISOString()
+            }, null, 2)
+          }),
+        });
+        console.log(`Saved ${allBoundingBoxes.length} bounding boxes to ${bboxFilename}`);
+        
+        // Wait a moment for SIM API to finish processing
+        console.log("⏳ Waiting for SIM API to complete redaction...");
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Automatically trigger PDF blurring
+        console.log("🔒 Starting automatic PDF blurring...");
+        try {
+          const blurRes = await fetch("/api/blur-pdf", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          });
+          
+          if (blurRes.ok) {
+            const blurData = await blurRes.json();
+            setRedactedHref(blurData.redactedPath);
+            console.log(`✅ Redacted PDF created: ${blurData.filename}`);
+            console.log(`📄 Download at: ${blurData.redactedPath}`);
+          } else {
+            console.warn("⚠️  PDF blurring failed, but text extraction succeeded");
+          }
+        } catch (blurErr) {
+          console.warn("⚠️  Could not auto-blur PDF:", blurErr.message);
+        }
+      }
+
     } catch (err) {
       console.error(err);
       setError(err?.message || "Failed to process PDF.");
@@ -154,20 +245,39 @@ function DocumentUploader() {
 
       {docName && !loading && !downHref && (
         <div className="doc-info">
-          <Upload size={14} /> Selected doc: <span className="doc-name">{docName}</span>
+          <Upload size={14} /> Processing: <span className="doc-name">{docName}</span>
         </div>
       )}
       {error && <div className="error-message">{error}</div>}
 
       {downHref && (
-        <a
-          href={downHref}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="download-link"
-        >
-          <LinkIcon size={14} /> Open saved text
-        </a>
+        <div className="download-links">
+          <a
+            href={downHref}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="download-link"
+          >
+            <LinkIcon size={14} /> Open saved text
+          </a>
+        </div>
+      )}
+
+      {redactedHref && (
+        <div className="download-links" style={{ marginTop: '1rem' }}>
+          <a
+            href={redactedHref}
+            download
+            className="download-link"
+            style={{ 
+              background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+              fontSize: '1.1em',
+              fontWeight: '600'
+            }}
+          >
+            <FileText size={16} /> Download Redacted PDF 🔒
+          </a>
+        </div>
       )}
     </div>
   );

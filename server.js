@@ -27,10 +27,39 @@ const SIM_API_URL = "https://www.sim.ai/api/workflows/a8a04aa4-679b-4978-aad0-02
 // Serve saved files so you can open them in the browser too
 app.use("/saved", express.static(SAVE_DIR));
 
+app.post("/api/save-pdf", async (req, res) => {
+  try {
+    const { filename, pdfData } = req.body || {};
+    if (!pdfData) return res.status(400).send("Missing PDF data");
+    
+    // Ensure the saved directory exists
+    await fs.mkdir(SAVE_DIR, { recursive: true });
+    
+    const safe = (filename || "document.pdf").replace(/[^\w.\-]/g, "_");
+    const full = path.join(SAVE_DIR, safe);
+    
+    // Convert base64 to buffer
+    const buffer = Buffer.from(pdfData, 'base64');
+    await fs.writeFile(full, buffer);
+    
+    return res.json({ 
+      ok: true, 
+      path: `/saved/${safe}`,
+      filename: safe
+    });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).send(e?.message || "Server error");
+  }
+});
+
 app.post("/api/save-text", async (req, res) => {
   try {
     const { filename, text } = req.body || {};
     if (!text) return res.status(400).send("Missing text");
+    
+    // Ensure the saved directory exists
+    await fs.mkdir(SAVE_DIR, { recursive: true });
     
     const safe = (filename || "extracted.txt").replace(/[^\w.\-]/g, "_");
     const full = path.join(SAVE_DIR, safe);
@@ -110,6 +139,91 @@ app.post("/api/save-text", async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).send(e?.message || "Server error");
+  }
+});
+
+app.post("/api/blur-pdf", async (req, res) => {
+  try {
+    console.log("\n🔒 Starting automatic PDF blurring...");
+    
+    const { execSync } = await import("child_process");
+    
+    // Step 1: Find redacted bounding boxes
+    console.log("📍 Finding redacted bounding boxes...");
+    const findOutput = execSync("node find-redacted-bboxes.js", { 
+      cwd: __dirname,
+      encoding: "utf8"
+    });
+    console.log(findOutput);
+    
+    // Step 2: Blur the PDF
+    console.log("🖊️  Blurring PDF...");
+    const blurOutput = execSync("node blur-pdf.js", { 
+      cwd: __dirname,
+      encoding: "utf8"
+    });
+    console.log(blurOutput);
+    
+    // Find the redacted PDF file
+    const files = await fs.readdir(SAVE_DIR);
+    const redactedPdf = files.find(f => f.includes("_REDACTED.pdf"));
+    
+    if (!redactedPdf) {
+      throw new Error("Redacted PDF not found");
+    }
+    
+    console.log("✅ PDF blurring complete!\n");
+    
+    // Clean up intermediate files (keep original PDF and redacted PDF only)
+    console.log("🧹 Cleaning up intermediate files...");
+    const filesToDelete = [
+      "extracted.txt",
+      "extracted_masked.txt", 
+      "extracted_bboxes.json",
+      "redacted_bboxes.json"
+    ];
+    
+    for (const filename of filesToDelete) {
+      try {
+        const filepath = path.join(SAVE_DIR, filename);
+        await fs.unlink(filepath);
+        console.log(`   ✓ Deleted ${filename}`);
+      } catch (err) {
+        // File might not exist, that's okay
+        if (err.code !== 'ENOENT') {
+          console.warn(`   ⚠️  Could not delete ${filename}`);
+        }
+      }
+    }
+    
+    // Also delete any bboxes.json files that match the pattern
+    const allFiles = await fs.readdir(SAVE_DIR);
+    for (const file of allFiles) {
+      if (file.endsWith('_bboxes.json')) {
+        try {
+          await fs.unlink(path.join(SAVE_DIR, file));
+          console.log(`   ✓ Deleted ${file}`);
+        } catch (err) {
+          console.warn(`   ⚠️  Could not delete ${file}`);
+        }
+      }
+    }
+    
+    console.log("✨ Cleanup complete!\n");
+    
+    return res.json({
+      ok: true,
+      message: "PDF successfully blurred",
+      redactedPath: `/saved/${redactedPdf}`,
+      filename: redactedPdf
+    });
+    
+  } catch (e) {
+    console.error("❌ Blur error:", e.message);
+    return res.status(500).json({
+      ok: false,
+      error: e?.message || "Failed to blur PDF"
+    });
   }
 });
 
